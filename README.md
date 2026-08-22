@@ -31,10 +31,18 @@ the phone is on the tailnet, or whether `DASH_URL` still resolves - so it report
 a healthy job while the phone gets nothing, which from the phone is
 indistinguishable from the server being down.
 
-`DASH_URL` in particular is worth checking after a rename: a machine renamed from
-`macbook-pro` to `macbook-pro-2` leaves every old tailnet URL dead, and a
-`DASH_URL` of `http://127.0.0.1:7777` means every notification tap opens the
-*phone*, not this Mac.
+`DASH_URL` in particular is worth checking after a rename. Renaming the machine
+is how you get a memorable URL:
+
+```sh
+tailscale set --hostname=supacode   # -> https://supacode.<tailnet>.ts.net
+tailscale serve reset && tailscale serve --bg 7777
+# then update DASH_URL, and wait ~30s for Tailscale to fetch the ACME cert
+```
+
+All three steps are required. `serve` binds to the OLD DNS name, so a rename on
+its own leaves the URL dead — and a `DASH_URL` of `http://127.0.0.1:7777` means
+every notification tap opens the *phone*, not this Mac. Both were true here.
 
 Logs in `logs/companion.log` and `logs/companion.err`.
 
