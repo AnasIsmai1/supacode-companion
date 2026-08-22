@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  /* Neutral near-black, four background levels. Slate reads blue; a developer
+     tool should read grey so that colour always means state, never decoration. */
+  --color-bg: #141414;
+  --color-surface: #1c1c1c;
+  --color-raised: #242424;
+  --color-line: #2e2e2e;
+
+  --color-fg: #e6e6e6;
+  --color-muted: #8a8a8a;   /* 4.6:1 on bg */
+  --color-faint: #6b6b6b;
+
+  /* Accent is reserved for selection and focus, so "blue" always means "this one". */
+  --color-accent: #4a9eff;
+  --color-primary: #4a9eff;
+
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-error: #f85149;
+  --color-info: #a371f7;
+
+  /* kept so existing call sites keep meaning what they meant */
+  --color-ask: #d29922;
+  --color-busy: #3fb950;
+
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, monospace;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Respect the user's motion preference rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

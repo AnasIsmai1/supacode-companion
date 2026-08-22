@@ -1,0 +1,69 @@
+#!/usr/bin/env bun
+// Terminal view of the same data the dashboard shows — the Termius fallback.
+//
+//   sup            list live sessions
+//   sup -a         also list dormant worktrees
+//   sup <n>        attach to session n
+//   sup log <n>    last 40 turns
+//   sup say <n> …  send a message without attaching
+
+import { listSessions } from "../lib/sessions.ts";
+import { listWorktrees } from "../lib/worktrees.ts";
+import { windowByPid } from "../lib/layout.ts";
+import { readChat } from "../lib/transcript.ts";
+import { ZMX } from "../lib/zmx.ts";
+import { payload } from "../lib/send.ts";
+
+const RANK = { ask: 0, busy: 1, idle: 2, shell: 3 } as const;
+const sessions = (await listSessions()).sort(
+  (a, b) => (a.ask ? 0 : RANK[a.status] ?? 3) - (b.ask ? 0 : RANK[b.status] ?? 3) || b.updatedAt - a.updatedAt,
+);
+
+const pick = (n: string) => sessions[Number(n) - 1];
+const [cmd, ...rest] = Bun.argv.slice(2);
+
+const ago = (ms: number) => {
+  if (!ms) return "";
+  const s = (Date.now() - ms) / 1000;
+  return s < 60 ? `${s | 0}s` : s < 3600 ? `${(s / 60) | 0}m` : s < 86400 ? `${(s / 3600) | 0}h` : `${(s / 86400) | 0}d`;
+};
+
+if (cmd === "log") {
+  const s = pick(rest[0]);
+  if (!s) process.exit(1);
+  for (const t of await readChat(s.sessionId, 40)) {
+    console.log(`\n\x1b[2m── ${t.role}${t.tools.length ? ` · ${t.tools.join(", ")}` : ""}\x1b[0m`);
+    if (t.text) console.log(t.text);
+  }
+} else if (cmd === "say") {
+  const s = pick(rest[0]);
+  if (!s?.zmx) process.exit(1);
+  Bun.spawnSync([ZMX, "send", s.zmx, payload(rest.slice(1).join(" "))]);
+} else if (cmd && /^\d+$/.test(cmd)) {
+  const s = pick(cmd);
+  if (!s?.zmx) process.exit(1);
+  Bun.spawnSync([ZMX, "attach", s.zmx], { stdio: ["inherit", "inherit", "inherit"] });
+} else {
+  const worktrees = cmd === "-a" ? await listWorktrees() : [];
+  const byPath = new Map(worktrees.map((w) => [w.path, w]));
+
+  const titles = windowByPid();
+  sessions.forEach((s, i) => {
+    const state = s.ask ? "\x1b[33mASK  \x1b[0m" : s.status === "busy" ? "\x1b[32mRUN  \x1b[0m" : "\x1b[2mIDLE \x1b[0m";
+    const w = byPath.get(s.cwd);
+    const where = [s.cwd.split("/").pop(), w?.branch].filter(Boolean).join(" · ");
+    console.log(
+      // Supacode's own window title, not Claude's derived session name.
+      `${String(i + 1).padStart(2)}  ${state} ${(titles.get(s.pid)?.window.title ?? s.name).slice(0, 38).padEnd(38)} ${where.slice(0, 26).padEnd(26)} ${ago(s.updatedAt)}`,
+    );
+  });
+
+  const taken = new Set(sessions.map((s) => s.cwd));
+  const dormant = worktrees.filter((w) => !taken.has(w.path));
+  if (dormant.length) {
+    console.log(`\n\x1b[2m── ${dormant.length} dormant\x1b[0m`);
+    for (const w of dormant.sort((a, b) => (b.lastCommit ?? 0) - (a.lastCommit ?? 0)).slice(0, 15)) {
+      console.log(`    \x1b[2m${(w.path.split("/").pop() ?? "").slice(0, 34).padEnd(34)} ${w.branch ?? ""}\x1b[0m`);
+    }
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+
+# Vite output. `cd web && bun run build` regenerates it; sources live in web/public.
+public/
+
+# Runtime state, never source.
+logs/
+.uploads/
+.remember/
+.claude/settings.local.json
+
+.DS_Store
+*.tmp
