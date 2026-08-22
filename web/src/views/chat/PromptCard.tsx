@@ -45,15 +45,20 @@ export function PromptCard({
   const live = pending.kind === "live-question";
   const question = live ? pending.question : "";
 
+  const inline = live ? pending.descriptions : undefined;
+
   useEffect(() => {
     if (!live) return;
+    // The usual layout ships every explanation with the poll already, so this
+    // costs nothing. Only the box-shaped dialog needs the server to walk.
+    if (inline && Object.keys(inline).length) { setDetails(inline); return; }
     let alive = true;
     setDetails({});
     get<{ details: Record<string, string> }>(`/api/details/${sessionId}`)
       .then((d) => alive && setDetails(d.details ?? {}))
       .catch(() => { /* titles only; still answerable */ });
     return () => { alive = false; };
-  }, [live, question, sessionId]);
+  }, [live, question, sessionId, inline]);
 
   const isQuestion = pending.kind === "question" || live;
 

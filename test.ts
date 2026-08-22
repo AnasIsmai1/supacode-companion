@@ -238,4 +238,33 @@ assert.ok(Date.now() - t0 < 20, "second call must come from cache");
   );
 }
 
+// --- inline option descriptions, from a real captured dialog ---
+// Claude Code draws every option's explanation under its title, all at once.
+// The parser only understood the other shape (a box to the right holding the
+// highlighted option's text), so the phone showed bare titles and you had to
+// choose between options you could not read.
+{
+  const screen = await Bun.file(
+    new URL("fixtures/live-question-inline.txt", import.meta.url),
+  ).text();
+  const p = parseLiveQuestion(screen) as any;
+  assert.ok(p && p.kind === "live-question", "the real dialog must parse");
+  assert.deepEqual(p.options.map((o: any) => o.key), ["1", "2", "3", "4"]);
+
+  const d = p.descriptions ?? {};
+  assert.equal(Object.keys(d).length, 3, "three options carry an explanation");
+  assert.ok(d["1"].startsWith("You loaded the chat on the phone"));
+  assert.ok(d["2"].startsWith("No trace was captured"));
+  assert.ok(d["3"].includes("explanations appeared under each title"));
+  // Wrapped lines are rejoined into one readable string, not left as fragments.
+  assert.ok(d["1"].length > 120, "continuation lines are joined");
+  // "4. Type something." has no explanation and must not get an empty one.
+  assert.equal(d["4"], undefined);
+  // Nothing below the divider leaks in.
+  for (const v of Object.values(d) as string[]) {
+    assert.ok(!v.includes("Chat about this"), "the chat row is not a description");
+    assert.ok(!v.includes("Enter to select"), "the footer is not a description");
+  }
+}
+
 console.log("ok");

@@ -14,7 +14,7 @@ export type Question = { header?: string; question: string; options: Choice[] };
 export type LiveOption = { key: string; label: string };
 export type Pending =
   | { kind: "question"; questions: Question[]; toolUseId: string }
-  | { kind: "live-question"; question: string; options: LiveOption[]; preview: string | null; previewHidden?: number; highlighted: string | null; canChat?: boolean; chatFocused?: boolean; tabs?: string[]; activeTab?: number | null; tabCount?: number }
+  | { kind: "live-question"; question: string; options: LiveOption[]; preview: string | null; previewHidden?: number; descriptions?: Record<string, string>; highlighted: string | null; canChat?: boolean; chatFocused?: boolean; tabs?: string[]; activeTab?: number | null; tabCount?: number }
   | { kind: "permission"; title: string; options: { key: string; label: string }[] }
   | null;
 export type Tool = { name: string; summary: string };

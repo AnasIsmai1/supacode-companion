@@ -18,6 +18,16 @@ export type Pending =
       question: string;
       options: { key: string; label: string }[];
       preview: string | null;
+      /**
+       * Each option's own explanation, keyed by number.
+       *
+       * Claude Code draws these INLINE, indented under the title, for every
+       * option at once. An earlier version of this only understood the other
+       * shape, where the highlighted option's text appears in a box to the
+       * right, so it reported bare titles and a phone user had to choose
+       * between options they could not read.
+       */
+      descriptions?: Record<string, string>;
       /** Lines Claude Code cut to fit the terminal; unrecoverable by scraping. */
       previewHidden?: number;
       highlighted: string | null;
@@ -197,15 +207,46 @@ export function parseLiveQuestion(screen: string): Pending {
   const options: { key: string; label: string }[] = [];
   let highlighted: string | null = null;
   let firstOptionRow = -1;
+  /** Row index of each option, so the lines under it can be attributed. */
+  const rowOf = new Map<string, number>();
   lines.forEach((l, i) => {
     const m = leftOf(l, i).match(/^(\s*[❯>]?\s*)([1-9])\.\s+(.+?)\s*$/);
     if (!m) return;
     if (firstOptionRow < 0) firstOptionRow = i;
     if (/[❯>]/.test(m[1])) highlighted = m[2];
     const label = cleanLabel(m[3]);
-    if (label && !options.some((o) => o.key === m[2])) options.push({ key: m[2], label });
+    if (label && !options.some((o) => o.key === m[2])) {
+      options.push({ key: m[2], label });
+      rowOf.set(m[2], i);
+    }
   });
   if (options.length < 2) return null;
+
+  /**
+   * The explanation under each title.
+   *
+   * Continuation lines are indented past the "N. " that starts the option and
+   * run until the next option, a rule, or a blank. Every option's text is on
+   * screen at once in this layout, so nothing has to be walked to read it.
+   */
+  const descriptions: Record<string, string> = {};
+  for (const [key, row] of rowOf) {
+    const head = leftOf(lines[row], row);
+    const indent = head.search(/[1-9]\./);
+    const body: string[] = [];
+    for (let i = row + 1; i < lines.length; i++) {
+      const raw = leftOf(lines[i], i);
+      if (!raw.trim()) break;
+      if (/^\s*[❯>]?\s*[1-9]\.\s/.test(raw)) break;      // the next option
+      if (/^[\s]*[─━═]{10,}/.test(raw)) break;             // a divider
+      if (/[☐☑☒]/.test(raw)) break;                        // the tab row
+      if (/Enter to select|to navigate/.test(raw)) break;   // the footer
+      if (raw.search(/\S/) <= indent) break;               // dedented: not ours
+      body.push(raw.trim());
+    }
+    const text = body.join(" ").trim();
+    if (text) descriptions[key] = text;
+  }
 
   // Tab row, if any: the lowest checkbox line above the options.
   let tabRow = -1;
@@ -256,7 +297,7 @@ export function parseLiveQuestion(screen: string): Pending {
   const chatKey = chatOption?.key ?? null;
 
   const answerable = options.filter((o) => !/^chat about this$/i.test(o.label));
-  return { kind: "live-question", question, options: answerable, preview: shown, previewHidden, highlighted, canChat, chatFocused, chatKey, ...tabs };
+  return { kind: "live-question", question, options: answerable, preview: shown, previewHidden, descriptions, highlighted, canChat, chatFocused, chatKey, ...tabs };
 }
 
 export async function pendingLiveQuestion(zmxName: string): Promise<Pending> {
