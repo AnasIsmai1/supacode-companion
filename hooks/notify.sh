@@ -63,8 +63,8 @@ json.dump({'message': sys.argv[1], 'type': sys.argv[2], 'at': int(time.time()*10
 # Preferred path: the server resolves the pending options and adds the buttons.
 body=$(/usr/bin/python3 -c "
 import json,sys
-print(json.dumps({'sessionId': sys.argv[1], 'project': sys.argv[2], 'message': sys.argv[3]}))
-" "$sid" "$project" "$msg")
+print(json.dumps({'sessionId': sys.argv[1], 'project': sys.argv[2], 'message': sys.argv[3], 'type': sys.argv[4]}))
+" "$sid" "$project" "$msg" "${ntype:-}")
 
 if curl -fsS --max-time 8 -H 'Content-Type: application/json' \
      -d "$body" "http://127.0.0.1:$PORT/api/notify" >/dev/null 2>&1; then

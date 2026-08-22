@@ -86,7 +86,22 @@ export type Push = {
  * respects Do Not Disturb; 5 is reserved for "a session is stopped until you
  * act". Turn both down here if it ever gets noisy.
  */
-const PRIORITY = { actionable: 5, informational: 4 } as const;
+const PRIORITY = { actionable: 5, informational: 4, idle: 2 } as const;
+
+/**
+ * Claude Code sends two very different things down one hook.
+ *
+ *   permission_prompt  a session is STOPPED until you answer
+ *   idle_prompt        you have not typed in a while
+ *
+ * Treating them alike is why 23 of 27 spool entries were idle_prompt and the
+ * tree showed 17 of 21 sessions as needing attention. It also trains you to
+ * ignore the notification that actually matters.
+ *
+ * idle_prompt still arrives — a finished turn is worth knowing about — but
+ * silently, at a priority Android will not sound or vibrate for.
+ */
+export const isUrgent = (type: string | null | undefined): boolean => type !== "idle_prompt";
 
 const label = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "?";
 
@@ -111,22 +126,31 @@ export function buildActions(
 
 export function buildPush(
   cfg: Config,
-  o: { sessionId: string; project: string; message: string; options?: { key: string; label: string }[] },
+  o: {
+    sessionId: string;
+    project: string;
+    message: string;
+    options?: { key: string; label: string }[];
+    /** Claude Code's notification_type. See isUrgent. */
+    type?: string | null;
+  },
 ): Push | null {
   if (!cfg.topic) return null;
 
+  const urgent = isUrgent(o.type);
   const actionable_ = Boolean(o.options?.length) && actionable(cfg.dashUrl);
   const push: Push = {
     topic: cfg.topic,
     title: o.project,
     message: o.message,
-    tags: ["bell"],
-    priority: actionable_ ? PRIORITY.actionable : PRIORITY.informational,
+    tags: [urgent ? "bell" : "speech_balloon"],
+    priority: !urgent ? PRIORITY.idle : actionable_ ? PRIORITY.actionable : PRIORITY.informational,
   };
   if (cfg.dashUrl) push.click = `${cfg.dashUrl}/s/${o.sessionId}`;
 
-  // No buttons rather than buttons that point at the phone itself.
-  if (actionable_) push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options!);
+  // No buttons rather than buttons that point at the phone itself. An idle
+  // nudge has nothing to answer even when a stale dialog is still on screen.
+  if (actionable_ && urgent) push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options!);
   return push;
 }
 
@@ -157,6 +181,45 @@ export function buildRunPush(
   return push;
 }
 
+/**
+ * Is a phone looking at this session right now?
+ *
+ * Being pushed about a prompt you are already staring at is pure noise, and it
+ * trains you to ignore the notifications that DO matter.
+ *
+ * No new client work is needed to know this. The chat view polls
+ * /api/session/<id> every 3s and `usePoll` stops the moment `document.hidden`
+ * is true — so a recent poll means that session is on a screen that is on.
+ * Backgrounding the app, locking the phone, or switching to another session all
+ * stop the polls within one interval.
+ *
+ * Deliberately keyed per SESSION, not per app: sitting on the tree while a
+ * different session asks something should still push.
+ */
+const viewing = new Map<string, number>();
+
+/** One poll interval is 3s; 20s is ~6 missed polls, so this errs toward pushing. */
+export const VIEWING_MS = 20_000;
+
+export function touchViewing(sessionId: string, now = Date.now()): void {
+  viewing.set(sessionId, now);
+  // Bounded: only sessions actually opened on a phone ever land here, and a
+  // stale entry is one number.
+  if (viewing.size > 200) {
+    for (const [k, at] of viewing) if (now - at > VIEWING_MS * 10) viewing.delete(k);
+  }
+}
+
+export function isViewing(sessionId: string, now = Date.now()): boolean {
+  const at = viewing.get(sessionId);
+  return at !== undefined && now - at < VIEWING_MS;
+}
+
+/** Test seam — the map is module state on purpose, so it needs a reset. */
+export function resetViewing(): void {
+  viewing.clear();
+}
+
 /** Options for whatever this session is currently waiting on, if anything. */
 export async function pendingOptions(sessionId: string): Promise<{ key: string; label: string }[]> {
   const s = (await listSessions()).find((x) => x.sessionId === sessionId);
@@ -185,9 +248,15 @@ export async function send(push: Push): Promise<boolean> {
 }
 
 /** Resolve what the session is waiting on, then push it with buttons. */
-export async function notify(o: { sessionId: string; project: string; message: string }): Promise<{ ok: boolean; actions: number }> {
+export async function notify(
+  o: { sessionId: string; project: string; message: string; type?: string | null },
+): Promise<{ ok: boolean; actions: number; suppressed?: boolean }> {
+  // You are already looking at it. The prompt card is on screen.
+  if (isViewing(o.sessionId)) return { ok: true, actions: 0, suppressed: true };
+
   const cfg = await readConfig();
-  const options = await pendingOptions(o.sessionId).catch(() => []);
+  // Only worth a zmx spawn when there is something to answer.
+  const options = isUrgent(o.type) ? await pendingOptions(o.sessionId).catch(() => []) : [];
   const push = buildPush(cfg, { ...o, options });
   if (!push) return { ok: false, actions: 0 };
   return { ok: await send(push), actions: push.actions?.length ?? 0 };
@@ -311,5 +380,42 @@ if (import.meta.main) {
 
   assert.equal(buildRunPush({ topic: null, dashUrl: null }, { worktree: "w", command: "c", exitCode: 0, seconds: 1 }), null);
 
+  // --- idle_prompt is not a permission prompt ---
+  assert.equal(isUrgent("permission_prompt"), true);
+  assert.equal(isUrgent("idle_prompt"), false);
+  assert.equal(isUrgent(null), true, "unknown types must stay loud, not silently vanish");
+
+  const idle = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude is waiting for your input",
+    options: opts, type: "idle_prompt",
+  })!;
+  assert.equal(idle.priority, 2, "you have not typed lately; nothing is blocked");
+  assert.equal(idle.actions, undefined, "an idle nudge has nothing to answer");
+  assert.deepEqual(idle.tags, ["speech_balloon"]);
+
+  const perm = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude needs your permission",
+    options: opts, type: "permission_prompt",
+  })!;
+  assert.equal(perm.priority, 5);
+  assert.equal(perm.actions?.length, 3);
+  assert.deepEqual(perm.tags, ["bell"]);
+
+  // --- presence: do not push about a prompt that is already on screen ---
+  resetViewing();
+  const t0 = 1_000_000;
+  assert.equal(isViewing("a", t0), false, "never opened -> push");
+
+  touchViewing("a", t0);
+  assert.equal(isViewing("a", t0 + 1_000), true, "polled 1s ago -> on screen");
+  assert.equal(isViewing("a", t0 + VIEWING_MS - 1), true);
+  // usePoll stops on document.hidden, so polls stopping IS the phone locking.
+  assert.equal(isViewing("a", t0 + VIEWING_MS + 1), false, "polls stopped -> push again");
+
+  // Per session, not per app: the tree does not name a session, so sitting on
+  // it must not silence a different session's prompt.
+  assert.equal(isViewing("b", t0 + 1_000), false, "another session is still pushed");
+
+  resetViewing();
   console.log("ok");
 }

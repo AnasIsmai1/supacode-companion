@@ -127,6 +127,10 @@ performed by the ntfy app **on the phone, from the phone's network** — the pho
 is on the tailnet, so the button POSTs straight to `/api/answer` with nothing
 exposed publicly and no auth added. Tap one and the session is answered.
 
+A finished run pushes too — `zmx wait` blocks until the detached task
+completes, so a build that fails while you are away says so, with its real exit
+code. That one is informational: nothing is blocked on you.
+
 Sent at ntfy priority 5 when there is something to answer, 4 otherwise. The
 default (3) is not enough: Android batched and deferred it, and a real
 permission prompt never surfaced at all while a max-priority test 90 seconds

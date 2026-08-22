@@ -16,7 +16,7 @@ import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
 import { liveTool, readEvents } from "./lib/events.ts";
 import { agentsFor } from "./lib/agents.ts";
-import { notify } from "./lib/notify.ts";
+import { isUrgent, notify, touchViewing } from "./lib/notify.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
@@ -42,7 +42,7 @@ function fromTranscript(v: string | null): Mode | null {
 }
 
 const RANK = { ask: 0, busy: 1, idle: 2, shell: 3 } as const;
-const rank = (s: Session) => (s.ask ? RANK.ask : RANK[s.status] ?? 3);
+const rank = (s: Session) => (s.ask && isUrgent(s.ask.type) ? RANK.ask : RANK[s.status] ?? 3);
 
 const json = (v: unknown, status = 200) =>
   Response.json(v, { status, headers: { "cache-control": "no-store" } });
@@ -203,6 +203,7 @@ const server = Bun.serve<WSData>({
     // --- one payload for the chat header: state + prompt, no zmx spawn ---
     const sess = p.match(/^\/api\/session\/([0-9a-f-]{36})$/i);
     if (sess) {
+      touchViewing(sess[1]);
       const s = await findSession(sess[1]);
       if (!s) return json({ error: "session not found" }, 404);
       const hit = s.pid != null ? windowByPid().get(s.pid) : undefined;
@@ -434,7 +435,9 @@ const server = Bun.serve<WSData>({
         sessionId: String(b.sessionId),
         project: String(b.project ?? "claude").slice(0, 60),
         message: String(b.message ?? "needs your input").slice(0, 300),
+        type: b.type ? String(b.type).slice(0, 40) : null,
       });
+      // Suppressed is a success: the prompt is already on your screen.
       return r.ok ? json(r) : json({ ...r, error: "ntfy send failed" }, 502);
     }
 
