@@ -1,8 +1,8 @@
 import { ArrowUp, ChevronDown, MessageSquare } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AsciiPreview } from "@/components/AsciiPreview";
 import { Button } from "@/components/ui/button";
-import { type Pending } from "@/lib/api";
+import { get, type Pending } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { isArt } from "@/views/chat/art";
 
@@ -19,9 +19,10 @@ import { isArt } from "@/views/chat/art";
  * positions never move while you compare them.
  */
 export function PromptCard({
-  pending, onAnswer, onReply, onHighlight,
+  pending, sessionId, onAnswer, onReply, onHighlight,
 }: {
   pending: NonNullable<Pending>;
+  sessionId: string;
   onAnswer: (key: string, note?: string) => void;
   onReply: (text: string) => void;
   onHighlight?: (key: string) => Promise<void>;
@@ -32,7 +33,28 @@ export function PromptCard({
   const [reply, setReply] = useState("");
   const [loadingPreview, setLoadingPreview] = useState(false);
 
+  /**
+   * Every option's explanation, not just the highlighted one.
+   *
+   * The dialog renders one description at a time, so a single scrape gives one
+   * explanation and the rest bare titles. That made this screen strictly worse
+   * than the laptop at the thing it exists for. The server walks the cursor
+   * across the options and puts it back; this asks it to, once per question.
+   */
+  const [details, setDetails] = useState<Record<string, string>>({});
   const live = pending.kind === "live-question";
+  const question = live ? pending.question : "";
+
+  useEffect(() => {
+    if (!live) return;
+    let alive = true;
+    setDetails({});
+    get<{ details: Record<string, string> }>(`/api/details/${sessionId}`)
+      .then((d) => alive && setDetails(d.details ?? {}))
+      .catch(() => { /* titles only; still answerable */ });
+    return () => { alive = false; };
+  }, [live, question, sessionId]);
+
   const isQuestion = pending.kind === "question" || live;
 
   const title = live
@@ -45,7 +67,7 @@ export function PromptCard({
     ? pending.options.map((o) => ({
         key: o.key,
         label: o.label,
-        description: undefined as string | undefined,
+        description: details[o.key],
         // The screen only renders the highlighted option's box, so a preview is
         // only available for that one until we move the highlight.
         preview: o.key === pending.highlighted ? pending.preview ?? undefined : undefined,

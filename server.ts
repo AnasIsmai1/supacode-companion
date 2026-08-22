@@ -11,6 +11,7 @@ import { readChat, transcriptPath } from "./lib/transcript.ts";
 import { saveUpload } from "./lib/upload.ts";
 import { appRunning, closeWindow, newWindow, newWorktree, openRepo, repos, startClaude } from "./lib/supacode.ts";
 import { pending, pendingLiveQuestion } from "./lib/prompts.ts";
+import { detailsFor } from "./lib/details.ts";
 import { MODES, readMode, setMode, type Mode } from "./lib/mode.ts";
 import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
@@ -489,6 +490,19 @@ const server = Bun.serve<WSData>({
       return (await f.exists())
         ? json({ markdown: await f.text() })
         : json({ error: "no TODO.md" }, 404);
+    }
+
+    // --- what each option actually means ---
+    // --- The dialog only ever renders the HIGHLIGHTED option's explanation, so
+    // --- one frame gives one description and N-1 bare titles. This walks the
+    // --- cursor across every option and puts it back. Arrow keys only; Enter is
+    // --- never sent. Deliberately its own endpoint: the walk costs about a
+    // --- second and must not ride the 3s session poll.
+    const det = p.match(/^\/api\/details\/([0-9a-f-]{36})$/i);
+    if (det) {
+      const s = await findSession(det[1]);
+      if (!s?.zmx) return json({ error: "session not found" }, 404);
+      return json({ details: await detailsFor(s.zmx) });
     }
 
     // --- disk browser, for adding a project ---

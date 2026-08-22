@@ -261,6 +261,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
         {meta?.pending && (
           <PromptCard
             pending={meta.pending}
+            sessionId={sessionId}
             onAnswer={async (key, note) => {
               try {
                 await post(`/api/answer/${sessionId}`, { key });
