@@ -18,7 +18,14 @@ export type Pending =
       question: string;
       options: { key: string; label: string }[];
       preview: string | null;
+      /** Lines Claude Code cut to fit the terminal; unrecoverable by scraping. */
+      previewHidden?: number;
       highlighted: string | null;
+      /** The dialog offers a "Chat about this" row — the only way to answer in prose. */
+      canChat?: boolean;
+      chatFocused?: boolean;
+      /** Set when that row is itself a numbered option, so one keystroke picks it. */
+      chatKey?: string | null;
       // Only when the AskUserQuestion holds more than one question, which Claude
       // Code draws as tabs. Optional so existing callers are unaffected.
       tabs?: string[];

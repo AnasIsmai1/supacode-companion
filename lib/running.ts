@@ -97,7 +97,7 @@ export async function runningOutput(
 }
 
 if (import.meta.main) {
-  const { strict: assert } = await import("node:assert");
+  const assert: typeof import("node:assert").strict = (await import("node:assert")).strict;
   const box = (prompt = "❯ ") =>
     ["─".repeat(80), prompt.padEnd(80), "─".repeat(80),
      "  Opus 5 | repo@main | 58k/1m (5%) | effort: med".padEnd(80),

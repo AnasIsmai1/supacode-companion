@@ -106,8 +106,8 @@ export async function listSessions(force = false): Promise<Session[]> {
   const fresh = cache && Date.now() - cache.at < TTL_MS;
   if (!force && fresh) return cache!.value;
   // Stale-while-revalidate: a poll never waits on a rescan once we have data.
-  if (!inflight) inflight = refresh();
-  return cache && !force ? cache.value : inflight;
+  const run = (inflight ??= refresh());
+  return cache && !force ? cache.value : run;
 }
 
 function refresh(): Promise<Session[]> {
@@ -115,7 +115,6 @@ function refresh(): Promise<Session[]> {
     .then((v) => { cache = { at: Date.now(), value: v }; return v; })
     .catch((e) => { if (cache) return cache.value; throw e; })
     .finally(() => { inflight = null; });
-  return inflight;
 }
 
 async function scanSessions(): Promise<Session[]> {

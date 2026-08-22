@@ -1,0 +1,14 @@
+{
+  "name": "supacode-companion",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test.ts && bun lib/events.test.ts && bun lib/running.ts && shellcheck hooks/*.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}

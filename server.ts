@@ -9,7 +9,7 @@ import { windowByPid, windowsByWorktree } from "./lib/layout.ts";
 import { ARROW, sendText, sendChoice } from "./lib/send.ts";
 import { readChat, transcriptPath } from "./lib/transcript.ts";
 import { saveUpload } from "./lib/upload.ts";
-import { appRunning, closeWindow, newWindow, newWorktree, openRepo, repos } from "./lib/supacode.ts";
+import { appRunning, closeWindow, newWindow, newWorktree, openRepo, repos, startClaude } from "./lib/supacode.ts";
 import { pending, pendingLiveQuestion } from "./lib/prompts.ts";
 import { MODES, readMode, setMode, type Mode } from "./lib/mode.ts";
 import { commands } from "./lib/commands.ts";
@@ -468,7 +468,7 @@ const server = Bun.serve<WSData>({
         const tail = Bun.spawn([ZMX, "tail", name], { stdout: "pipe", stderr: "ignore" });
         ws.data.tail = tail;
         (async () => {
-          for await (const chunk of tail.stdout as ReadableStream<Uint8Array>) {
+          for await (const chunk of tail.stdout) {
             try { ws.send(chunk); } catch { break; }
           }
         })();
