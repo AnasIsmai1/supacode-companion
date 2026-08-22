@@ -1,6 +1,7 @@
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { usePoll } from "@/lib/api";
+import { TextLines } from "@/components/Skeleton";
 
 /**
  * The backlog, read only.
@@ -30,7 +31,7 @@ export function Todo({ onBack }: { onBack: () => void }) {
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
         {error && !data && <p className="text-sm text-error">{error}</p>}
-        {!data && !error && <p className="text-sm text-muted">Loading…</p>}
+        {!data && !error && <TextLines />}
         {data && <Markdown>{data.markdown}</Markdown>}
       </main>
 

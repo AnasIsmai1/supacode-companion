@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { usePoll, type Project, type Win, type Worktree } from "@/lib/api";
 import { Disconnected } from "@/components/Disconnected";
 import { ago, cn } from "@/lib/utils";
+import { SessionRows } from "@/components/Skeleton";
 
 function WindowRow({ w, onOpen }: { w: Win; onOpen: (w: Win) => void }) {
   const attention = Boolean(w.ask);
@@ -163,7 +164,7 @@ export function Tree({
 
   // Never loaded and erroring means the server is unreachable, not slow.
   if (error && !data) return <Disconnected detail={error} />;
-  if (!data) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (!data) return <SessionRows n={7} />;
 
   return (
     <>

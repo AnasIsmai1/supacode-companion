@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Disconnected } from "@/components/Disconnected";
 import { get, post, usePoll, type Project, type Win } from "@/lib/api";
 import { ago, cn } from "@/lib/utils";
+import { SessionRows } from "@/components/Skeleton";
 
 /**
  * Where the Android share sheet lands.
@@ -95,7 +96,7 @@ export function Share({ id, onOpen, onBack }: {
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         {!tree ? (
-          <p className="p-4 text-sm text-muted">Loading…</p>
+          <SessionRows n={5} />
         ) : !live.length ? (
           <p className="p-8 text-center text-sm text-muted">No live sessions to send to.</p>
         ) : (

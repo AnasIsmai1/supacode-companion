@@ -5,6 +5,7 @@ import { get, post, usePoll, type Commit, type DiffFile, type SessionDiff } from
 import { ago, cn } from "@/lib/utils";
 import { Actions } from "@/views/work/Actions";
 import { Runs } from "@/views/work/Runs";
+import { CommitRows, FileRows, PatchLines } from "@/components/Skeleton";
 
 /**
  * Everything a worktree has to say, independent of any Claude session.
@@ -124,7 +125,7 @@ function FileRow({ wt, file }: { wt: string; file: DiffFile }) {
           ) : patch ? (
             <PatchDiff patch={patch} options={{ diffStyle: "unified" }} />
           ) : (
-            <p className="px-4 py-3 text-xs text-muted">Loading…</p>
+            <PatchLines />
           )}
           {file.truncated && (
             <p className="px-4 py-2 text-[11px] text-warning">Truncated — this file is too large to show in full.</p>
@@ -139,7 +140,7 @@ function Changes({ wt }: { wt: string }) {
   const { data, error } = usePoll<SessionDiff>(`/api/diff?wt=${encodeURIComponent(wt)}`, 8000);
 
   if (error && !data) return <p className="p-4 text-sm text-error">{error}</p>;
-  if (!data) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (!data) return <FileRows />;
   if (!data.ok) return <p className="p-4 text-sm text-error">{data.error ?? "could not read this worktree"}</p>;
   if (!data.files.length) return <p className="p-8 text-center text-sm text-muted">No changes on this branch.</p>;
 
@@ -175,7 +176,7 @@ function History({ wt }: { wt: string }) {
   );
 
   if (error && !data) return <p className="p-4 text-sm text-error">{error}</p>;
-  if (!data) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (!data) return <CommitRows />;
   if (!data.commits.length) return <p className="p-8 text-center text-sm text-muted">No commits on this branch.</p>;
 
   return (

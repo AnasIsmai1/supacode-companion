@@ -4,6 +4,7 @@ import { Sheet } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { post, type Worktree } from "@/lib/api";
 import { Tree } from "@/views/Tree";
+import { ViewSkeleton } from "@/components/Skeleton";
 
 // Markdown, Shiki and xterm are only needed once you open something — keep them
 // out of the tree's first paint.
@@ -46,7 +47,8 @@ function parse(): Route {
   return { view: "tree" };
 }
 
-const Loading = () => <p className="p-4 text-sm text-muted">Loading…</p>;
+// Shaped like the view that is coming, so nothing shifts when it arrives.
+const Loading = () => <ViewSkeleton />;
 
 export default function App() {
   const [route, setRoute] = useState<Route>(parse);
