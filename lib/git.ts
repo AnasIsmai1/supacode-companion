@@ -190,6 +190,56 @@ async function ghPrUrl(wt: string, branch: string): Promise<string | null> {
   }
 }
 
+export type Commit = {
+  sha: string;
+  subject: string;
+  author: string;
+  at: number;
+  /** True once the commit exists on the upstream branch. */
+  pushed: boolean;
+};
+
+/**
+ * What this branch has actually landed.
+ *
+ * The app could show what changed and could land it, but never what had already
+ * been landed, which is the question you ask when you come back to a worktree
+ * cold. Marks which commits are still local so "did I push that" stops being a
+ * guess.
+ */
+export async function log(wt: string, limit = 30): Promise<Commit[]> {
+  const st = await status(wt);
+  const range = st.upstream ? `${st.upstream}..HEAD` : "";
+
+  // %x1f is a unit separator: subjects contain anything, including tabs.
+  const fmt = "%H%x1f%s%x1f%an%x1f%ct";
+  const r = await git(wt, ["log", `-${Math.min(limit, 100)}`, `--format=${fmt}`]);
+  if (!r.ok) return [];
+
+  // Whatever is ahead of upstream has not been pushed. No network, no fetch.
+  const aheadSet = new Set<string>();
+  if (range) {
+    const ahead = await git(wt, ["rev-list", range]);
+    if (ahead.ok) for (const l of ahead.out.split("\n")) if (l.trim()) aheadSet.add(l.trim());
+  }
+
+  const out: Commit[] = [];
+  for (const line of r.out.split("\n")) {
+    if (!line.trim()) continue;
+    const [sha, subject, author, ct] = line.split("\x1f");
+    if (!sha) continue;
+    out.push({
+      sha: sha.slice(0, 8),
+      subject: subject ?? "",
+      author: author ?? "",
+      at: Number(ct) * 1000 || 0,
+      // With no upstream nothing has been pushed, by definition.
+      pushed: st.upstream ? !aheadSet.has(sha) : false,
+    });
+  }
+  return out;
+}
+
 /** Throw away changes to ONE file, tracked or not. */
 export async function restoreFile(wt: string, path: string): Promise<GitResult> {
   const rel = safeRelPath(path);
@@ -292,6 +342,22 @@ if (import.meta.main) {
   assert.equal(existsSync(`${tmp}/c.txt`), false);
   assert.equal(await Bun.file(`${tmp}/b.txt`).text(), "two\n");
   assert.equal((await status(tmp)).clean, true);
+
+  // --- log: what this branch has landed ---
+  const hist = await log(tmp);
+  assert.ok(hist.length >= 2, `expected at least base + one commit, got ${hist.length}`);
+  assert.equal(hist[0].subject.length, SUBJECT_MAX, "newest first; that was the 50-char one");
+  assert.ok(/^[0-9a-f]{8}$/.test(hist[0].sha), "short sha");
+  assert.ok(hist[0].at > 0, "authored time is populated");
+  assert.equal(hist[0].author, "t");
+  // No upstream at all, so nothing here has been pushed.
+  assert.ok(hist.every((c) => c.pushed === false), "no upstream means nothing is pushed");
+  // A subject containing a tab must not split the record.
+  await Bun.write(`${tmp}/tabbed.txt`, "x\n");
+  await commit(tmp, "subject\twith a tab");
+  assert.equal((await log(tmp))[0].subject, "subject\twith a tab");
+
+  assert.deepEqual(await log("/definitely/not/here"), []);
 
   await Bun.spawn(["rm", "-rf", tmp]).exited;
   console.log("ok");

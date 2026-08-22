@@ -42,9 +42,24 @@ project=$(basename "${cwd:-unknown}")
 spool_file="$SPOOL/$sid.json"
 
 case "$event" in
-  Stop|SubagentStop)
+  SubagentStop)
+    rm -f "$spool_file"
+    exit 0
+    ;;
+  Stop)
     # Turn finished: whatever it was waiting for, it is no longer waiting.
     rm -f "$spool_file"
+    # You get told when Claude ASKS. This is the other half: when it is done.
+    # The server decides whether it is worth sending, since only it knows how
+    # long the turn ran and whether you are already looking at the session.
+    last=$(jq_get last_assistant_message)
+    body=$(/usr/bin/python3 -c "
+import json,sys
+print(json.dumps({'sessionId': sys.argv[1], 'project': sys.argv[2],
+                  'message': (sys.argv[3] or 'finished')[:200], 'type': 'turn_finished'}))
+" "$sid" "$project" "$last")
+    curl -fsS --max-time 5 -H 'Content-Type: application/json' \
+      -d "$body" "http://127.0.0.1:$PORT/api/notify" >/dev/null 2>&1 || true
     exit 0
     ;;
 esac

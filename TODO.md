@@ -2,19 +2,27 @@
 
 ## Next up
 
-- [ ] Qualitative audit of the whole repo. It has roughly doubled since the
-      audit in `V2.md`, and nothing written today has been reviewed by anything
-      except its own self-check.
-- [ ] Check the layout on a real phone. The chat header carried seven controls
-      that could not shrink, which set a floor width wider than the screen and
-      clipped text mid-word. Diff, terminal and backlog moved into the menu.
-      Whether that is enough is only answerable on the device.
-- [ ] Auto-load the highlighted option's description in a live question. The app
-      calls it "preview" and hides it behind a tap, but it is the description,
-      and you are choosing between options without it.
 - [ ] Decide whether `hooks/events.sh` earns its ~52ms per tool call. Measured,
       against the 27ms its own comment claims. Backgrounding the bun call drops
-      it to ~5ms and gives up delivery guarantees.
+      it to ~5ms and gives up delivery guarantees. Now that stuck detection
+      depends on its heartbeat, removing it costs more than it did.
+- [ ] Watch whether the finished-turn push is the right threshold. 90 seconds is
+      a guess. Too low and every turn buzzes; too high and the build you walked
+      away from stays silent.
+
+## Done 2026-08-22
+
+- [x] Qualitative repo audit. Four real defects, all fixed: unbounded supacode
+      waits (the CLI defaults to 180s), whole-transcript re-reads on every poll,
+      an unbounded request body, and one unbounded network spawn.
+- [x] Option descriptions in a live question. They were on screen the whole
+      time, indented under each title; the parser only understood the other
+      layout and threw them away.
+- [x] Per-file revert from the diff view.
+- [x] Branch history, with unpushed commits marked.
+- [x] A push when a long turn finishes, not only when Claude asks.
+- [x] Phone layout. The chat header carried seven controls that could not
+      shrink and set a floor width wider than the screen.
 
 Open work, roughly in the order I'd do it. `V2.md` holds the design and the
 decision log; this is just what is left.

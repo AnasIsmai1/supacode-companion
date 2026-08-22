@@ -1,8 +1,8 @@
 import { PatchDiff } from "@pierre/diffs/react";
-import { ChevronDown, ChevronLeft, FileDiff, FilePlus, FileMinus, FileX, GitBranch } from "lucide-react";
+import { ChevronDown, ChevronLeft, FileDiff, FilePlus, FileMinus, FileX, GitBranch, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { get, usePoll, type DiffFile, type SessionDiff } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { get, post, usePoll, type Commit, type DiffFile, type SessionDiff } from "@/lib/api";
+import { ago, cn } from "@/lib/utils";
 import { Actions } from "@/views/work/Actions";
 import { Runs } from "@/views/work/Runs";
 
@@ -27,7 +27,23 @@ function FileRow({ wt, file }: { wt: string; file: DiffFile }) {
   const [open, setOpen] = useState(false);
   const [patch, setPatch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Two taps, not one: this throws work away and there is no undo for it.
+  const [confirming, setConfirming] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const Icon = ICON[file.status];
+
+  const restore = async () => {
+    setUndoing(true);
+    try {
+      await post(`/api/git/restore?wt=${encodeURIComponent(wt)}`, { path: file.path });
+      setConfirming(false);
+      setOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUndoing(false);
+    }
+  };
 
   useEffect(() => {
     // Only the expanded file's patch is fetched — a 300-file change must not
@@ -62,6 +78,42 @@ function FileRow({ wt, file }: { wt: string; file: DiffFile }) {
           {file.binary && <span className="text-faint">bin</span>}
         </span>
       </button>
+
+      {open && (
+        <div className="border-t border-line bg-bg px-4 py-2">
+          {confirming ? (
+            <span className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-warning">
+                {file.status === "untracked" ? "Delete this new file?" : "Throw away changes to this file?"}
+              </span>
+              <button
+                onClick={restore}
+                disabled={undoing}
+                className="min-h-9 cursor-pointer rounded border border-error/50 px-2 py-1 text-error
+                           transition-colors duration-200 hover:bg-error/10 disabled:opacity-50"
+              >
+                {undoing ? "…" : file.status === "untracked" ? "delete" : "discard"}
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                className="min-h-9 cursor-pointer px-2 py-1 text-muted hover:text-fg"
+              >
+                cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              className="flex min-h-9 cursor-pointer items-center gap-1.5 text-[11px] text-faint
+                         transition-colors duration-200 hover:text-warning
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <Undo2 className="size-3" aria-hidden />
+              revert this file
+            </button>
+          )}
+        </div>
+      )}
 
       {open && (
         <div className="overflow-x-auto border-t border-line bg-bg">
@@ -110,11 +162,50 @@ function Changes({ wt }: { wt: string }) {
   );
 }
 
-type Tab = "changes" | "run" | "actions";
+/**
+ * What this branch already landed.
+ *
+ * You could see what changed and you could land it, but never what had been
+ * landed, which is the first question when you come back to a worktree cold.
+ * Unpushed commits are marked, so "did I push that" stops being a guess.
+ */
+function History({ wt }: { wt: string }) {
+  const { data, error } = usePoll<{ commits: Commit[] }>(
+    `/api/git/log?wt=${encodeURIComponent(wt)}`, 20_000,
+  );
+
+  if (error && !data) return <p className="p-4 text-sm text-error">{error}</p>;
+  if (!data) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (!data.commits.length) return <p className="p-8 text-center text-sm text-muted">No commits on this branch.</p>;
+
+  return (
+    <ul>
+      {data.commits.map((c) => (
+        <li key={c.sha} className="flex min-w-0 items-baseline gap-2 border-b border-line px-4 py-2">
+          <span
+            className={cn("mt-1 size-1.5 shrink-0 rounded-full", c.pushed ? "bg-faint" : "bg-warning")}
+            aria-label={c.pushed ? "pushed" : "not pushed"}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block break-words text-[13px] leading-snug">{c.subject}</span>
+            <span className="block truncate font-mono text-[10px] text-faint">
+              {c.sha} · {c.author}
+              {!c.pushed && <span className="text-warning"> · unpushed</span>}
+            </span>
+          </span>
+          <span className="shrink-0 text-[10px] tabular-nums text-faint">{ago(c.at)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type Tab = "changes" | "run" | "history" | "actions";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "changes", label: "Changes" },
   { id: "run", label: "Run" },
+  { id: "history", label: "History" },
   { id: "actions", label: "Actions" },
 ];
 
@@ -178,6 +269,7 @@ export function Work({ wt, onBack }: { wt: string; onBack: () => void }) {
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         {tab === "changes" && <Changes wt={wt} />}
         {tab === "run" && <Runs wt={wt} />}
+        {tab === "history" && <History wt={wt} />}
         {tab === "actions" && <Actions wt={wt} branch={diff?.branch ?? null} dirty={(stat?.files ?? 0) > 0} />}
       </main>
     </div>

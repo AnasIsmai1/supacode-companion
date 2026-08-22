@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { pending } from "./prompts.ts";
 import { listSessions } from "./sessions.ts";
 import { isViewing } from "./presence.ts";
+import { readEvents } from "./events.ts";
 
 const CONFIG = join(homedir(), ".claude", "companion", "config.env");
 
@@ -102,7 +103,17 @@ const PRIORITY = { actionable: 5, informational: 4, idle: 2 } as const;
  * idle_prompt still arrives — a finished turn is worth knowing about — but
  * silently, at a priority Android will not sound or vibrate for.
  */
-export const isUrgent = (type: string | null | undefined): boolean => type !== "idle_prompt";
+export const isUrgent = (type: string | null | undefined): boolean =>
+  type !== "idle_prompt" && type !== "turn_finished";
+
+/**
+ * Below this, a finished turn is not worth a notification.
+ *
+ * Stop fires at the end of EVERY turn. Pushing all of them would be worse than
+ * pushing none: the point is to hear about the long one you walked away from,
+ * not the six-second answer you were watching.
+ */
+export const FINISHED_MIN_MS = 90_000;
 
 const label = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "?";
 
@@ -240,11 +251,33 @@ export async function send(push: Push): Promise<boolean> {
 }
 
 /** Resolve what the session is waiting on, then push it with buttons. */
+/**
+ * How long the turn that just ended actually ran.
+ *
+ * The Stop hook does not carry a duration, but the event stream records the
+ * prompt that started the turn. Null when there is nothing to measure against,
+ * which is treated as "do not push": silence is the safer default for a signal
+ * that fires on every single turn.
+ */
+export async function turnLength(sessionId: string, now = Date.now()): Promise<number | null> {
+  const events = await readEvents(sessionId, 200).catch(() => []);
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].ev === "prompt") return now - events[i].at;
+  }
+  return null;
+}
+
 export async function notify(
   o: { sessionId: string; project: string; message: string; type?: string | null },
 ): Promise<{ ok: boolean; actions: number; suppressed?: boolean }> {
   // You are already looking at it. The prompt card is on screen.
   if (isViewing(o.sessionId)) return { ok: true, actions: 0, suppressed: true };
+
+  // Stop fires at the end of every turn. Only the long ones are news.
+  if (o.type === "turn_finished") {
+    const ran = await turnLength(o.sessionId);
+    if (ran === null || ran < FINISHED_MIN_MS) return { ok: true, actions: 0, suppressed: true };
+  }
 
   const cfg = await readConfig();
   // Only worth a zmx spawn when there is something to answer.
@@ -395,6 +428,15 @@ if (import.meta.main) {
     "1. Yes\n   does the thing",
     "descriptions are included and whitespace collapsed",
   );
+
+  // --- a finished turn is informational and carries nothing to answer ---
+  const finished = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "done in 4m", options: opts, type: "turn_finished",
+  })!;
+  assert.equal(finished.priority, 2, "nothing is blocked on you");
+  assert.equal(finished.actions, undefined, "a finished turn has no options to press");
+  assert.equal(isUrgent("turn_finished"), false);
+  assert.ok(FINISHED_MIN_MS > 60_000, "a minute-long turn is one you watched");
 
   const spelled = buildPush(good, {
     sessionId: "sid", project: "repo", message: "Claude needs your permission",

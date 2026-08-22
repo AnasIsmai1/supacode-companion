@@ -25,7 +25,7 @@ import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
 import { diffStat, diffSummary, filePatch, resolveWorktree } from "./lib/diff.ts";
 import { runState, scripts, startRun, stopRun } from "./lib/run.ts";
-import { commit, createPR, discardAll, push, restoreFile, status } from "./lib/git.ts";
+import { commit, createPR, discardAll, log as gitLog, push, restoreFile, status } from "./lib/git.ts";
 import { comment as prComment, merge as prMerge, view as prView, type MergeMethod } from "./lib/pr.ts";
 import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
@@ -406,6 +406,9 @@ const server = Bun.serve<WSData>({
       if (!wt) return json({ error: "unknown worktree" }, 404);
 
       if (p === "/api/git/status") return json(await status(wt));
+      // What this branch already landed. The app could show what changed and
+      // could land it, but never what had been landed.
+      if (p === "/api/git/log") return json({ commits: await gitLog(wt) });
       if (req.method !== "POST") return json({ error: "not found" }, 404);
 
       const b = (await req.json().catch(() => ({}))) as Record<string, string>;
