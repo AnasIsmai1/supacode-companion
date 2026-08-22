@@ -18,16 +18,23 @@ this checkout; it is not committed, because it needs absolute paths.
 `sup status` probes all five links, not just the one launchd knows about:
 
 ```
-  OK  launchd          running pid 2549 - 86 runs
+  OK  launchd          running pid 25304
   OK  port 7777        listening
   OK  http             HTTP 200 - 21 live sessions
   OK  tailscale serve  proxying to :7777
   --  tailnet          Pixel 8 Pro OFFLINE
+  OK  notify url       https://<machine>.ts.net -> HTTP 200
 ```
 
-That last line is the point. launchd cannot see `tailscale serve` or whether the
-phone is on the tailnet, so it reports a healthy job while the phone gets
-nothing - which from the phone is indistinguishable from the server being down.
+Those last two lines are the point. launchd cannot see `tailscale serve`, whether
+the phone is on the tailnet, or whether `DASH_URL` still resolves - so it reports
+a healthy job while the phone gets nothing, which from the phone is
+indistinguishable from the server being down.
+
+`DASH_URL` in particular is worth checking after a rename: a machine renamed from
+`macbook-pro` to `macbook-pro-2` leaves every old tailnet URL dead, and a
+`DASH_URL` of `http://127.0.0.1:7777` means every notification tap opens the
+*phone*, not this Mac.
 
 Logs in `logs/companion.log` and `logs/companion.err`.
 

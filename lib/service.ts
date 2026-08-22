@@ -186,7 +186,36 @@ export async function probe(): Promise<Link[]> {
     });
   }
 
+  links.push(await checkDashUrl());
+
   return links;
+}
+
+/**
+ * The URL notifications tell your phone to open.
+ *
+ * It lives in ~/.claude/companion/config.env, outside the repo, and nothing ever
+ * checked it. It was `http://127.0.0.1:7777` — which on the PHONE means the
+ * phone, so every notification tap opened nothing at all, silently, for as long
+ * as notifications have existed. A loopback DASH_URL is always wrong; so is a
+ * tailnet name that no longer resolves.
+ */
+export async function checkDashUrl(): Promise<Link> {
+  const f = Bun.file(join(homedir(), ".claude", "companion", "config.env"));
+  if (!(await f.exists())) return { name: "notify url", ok: false, detail: "no config.env — notifications are off" };
+
+  const url = (await f.text()).match(/^DASH_URL=(.+)$/m)?.[1]?.trim() ?? "";
+  if (!url) return { name: "notify url", ok: false, detail: "DASH_URL not set" };
+  if (/^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)\b/.test(url)) {
+    return { name: "notify url", ok: false, detail: `${url} — loopback resolves to the PHONE, not this Mac` };
+  }
+
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return { name: "notify url", ok: r.ok, detail: `${url} -> HTTP ${r.status}` };
+  } catch {
+    return { name: "notify url", ok: false, detail: `${url} — unreachable` };
+  }
 }
 
 /** The tail of stderr, which is empty when nothing has gone wrong. */
