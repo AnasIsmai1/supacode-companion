@@ -1,5 +1,5 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { ChevronRight, CircleDot, Circle, FileDiff, FolderPlus, Plus, Search, Terminal, TriangleAlert, X } from "lucide-react";
+import { ChevronRight, CircleDot, Circle, FileDiff, FolderPlus, ListTodo, Plus, Search, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { usePoll, type Project, type Win, type Worktree } from "@/lib/api";
@@ -133,8 +133,14 @@ function Section({ title, rows, onOpen }: { title: string; rows: Flat[]; onOpen:
 }
 
 export function Tree({
-  onOpen, onNewWindow, onBrowse, onWork,
-}: { onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void; onBrowse: () => void; onWork: (wt: Worktree) => void }) {
+  onOpen, onNewWindow, onBrowse, onWork, onTodo,
+}: {
+  onOpen: (w: Win) => void;
+  onNewWindow: (wt: Worktree) => void;
+  onBrowse: () => void;
+  onWork: (wt: Worktree) => void;
+  onTodo: () => void;
+}) {
   const { data, error } = usePoll<{ projects: Project[]; live: number }>("/api/tree", 3000);
   const [q, setQ] = useState("");
 
@@ -164,6 +170,9 @@ export function Tree({
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <h1 className="flex-1 text-lg font-semibold">Supacode</h1>
         <span className="text-xs tabular-nums text-muted">{data.live} live</span>
+        <Button variant="ghost" size="icon" aria-label="Backlog" onClick={onTodo}>
+          <ListTodo className="size-5" aria-hidden />
+        </Button>
         <Button variant="ghost" size="icon" aria-label="Add project from disk" onClick={onBrowse}>
           <FolderPlus className="size-5" aria-hidden />
         </Button>

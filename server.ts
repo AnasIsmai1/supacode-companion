@@ -474,6 +474,16 @@ const server = Bun.serve<WSData>({
       return json({ error: "not found" }, 404);
     }
 
+    // --- the backlog, read only ---
+    // --- TODO.md is the source of truth and stays editable on the Mac. This
+    // --- exists so the list is legible from the phone, nothing more.
+    if (p === "/api/todo") {
+      const f = Bun.file(join(import.meta.dir, "TODO.md"));
+      return (await f.exists())
+        ? json({ markdown: await f.text() })
+        : json({ error: "no TODO.md" }, 404);
+    }
+
     // --- disk browser, for adding a project ---
     if (p === "/api/fs") {
       try {
