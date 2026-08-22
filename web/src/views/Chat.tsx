@@ -268,11 +268,13 @@ function TurnView({ t }: { t: Turn }) {
  * and only what is in flight or still to come is shown up front.
  */
 function TaskStrip({ list }: { list: TaskList }) {
-  const [open, setOpen] = useState(true);
-  const [showDone, setShowDone] = useState(false);
-  if (!list.counts.total) return null;
-
   const { total, done, active } = list.counts;
+  // With nothing left open, hiding the completed list leaves an empty box that
+  // says "everything is done" and shows none of it. Finished work IS the answer
+  // in that case, so show it.
+  const [open, setOpen] = useState(true);
+  const [showDone, setShowDone] = useState(total > 0 && done === total);
+  if (!total) return null;
   const visible = showDone ? list.tasks : list.tasks.filter((t) => t.status !== "completed");
   const pct = total ? Math.round((done / total) * 100) : 0;
 
