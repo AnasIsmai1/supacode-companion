@@ -130,6 +130,33 @@ export function buildPush(
   return push;
 }
 
+/**
+ * A finished run.
+ *
+ * The whole point of runs surviving the phone locking is that you walk away.
+ * A four-minute build that finishes while you are gone should say so, with its
+ * real exit code — not wait for you to remember to look.
+ *
+ * Informational priority: nothing is blocked on you, so this must not be as
+ * loud as a session that has actually stopped waiting.
+ */
+export function buildRunPush(
+  cfg: Config,
+  o: { worktree: string; command: string; exitCode: number; seconds: number },
+): Push | null {
+  if (!cfg.topic) return null;
+  const ok = o.exitCode === 0;
+  const push: Push = {
+    topic: cfg.topic,
+    title: o.worktree,
+    message: `${ok ? "passed" : `failed (exit ${o.exitCode})`} in ${o.seconds}s — ${o.command}`.slice(0, 300),
+    tags: [ok ? "white_check_mark" : "x"],
+    priority: PRIORITY.informational,
+  };
+  if (cfg.dashUrl) push.click = `${cfg.dashUrl}/w?wt=${encodeURIComponent(o.worktree)}`;
+  return push;
+}
+
 /** Options for whatever this session is currently waiting on, if anything. */
 export async function pendingOptions(sessionId: string): Promise<{ key: string; label: string }[]> {
   const s = (await listSessions()).find((x) => x.sessionId === sessionId);
@@ -269,6 +296,20 @@ if (import.meta.main) {
   })!;
   assert.equal(full.actions?.length, 3);
   assert.ok(JSON.stringify(full).length < 4000, "ntfy rejects oversized payloads");
+
+  // --- run completion pushes ---
+  const pass = buildRunPush(good, { worktree: "/w/repo", command: "bun test", exitCode: 0, seconds: 12 })!;
+  assert.ok(pass.message.startsWith("passed in 12s"));
+  assert.deepEqual(pass.tags, ["white_check_mark"]);
+  assert.equal(pass.priority, 4, "a finished run blocks nothing — must not be as loud as a prompt");
+  assert.equal(pass.actions, undefined, "there is nothing to answer");
+  assert.ok(pass.click?.includes("/w?wt="), "clicking goes to the worktree, not a session");
+
+  const fail = buildRunPush(good, { worktree: "/w/repo", command: "bun run build", exitCode: 2, seconds: 240 })!;
+  assert.ok(fail.message.startsWith("failed (exit 2) in 240s"));
+  assert.deepEqual(fail.tags, ["x"]);
+
+  assert.equal(buildRunPush({ topic: null, dashUrl: null }, { worktree: "w", command: "c", exitCode: 0, seconds: 1 }), null);
 
   console.log("ok");
 }

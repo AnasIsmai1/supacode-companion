@@ -14,6 +14,7 @@
 
 import { existsSync } from "node:fs";
 import { zmx, ZMX } from "./zmx.ts";
+import { buildRunPush, readConfig, send } from "./notify.ts";
 
 /** Single-quote for bash. Worktree paths contain spaces ("Nuclear Codes"). */
 export const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -90,8 +91,47 @@ export async function startRun(wt: string, command: string): Promise<{ ok: boole
   const code = await p.exited;
   clearTimeout(killer);
 
-  return code === 0 ? { ok: true, session } : { ok: false, session, error: (err || out).trim() || "zmx run failed" };
+  if (code !== 0) return { ok: false, session, error: (err || out).trim() || "zmx run failed" };
+  watchRun(wt, command, Date.now());
+  return { ok: true, session };
 }
+
+/**
+ * Push a notification when a detached run finishes.
+ *
+ * `zmx wait` exists for exactly this: it blocks until the session's task
+ * completes. So no polling loop and no timer — one process parked on the thing
+ * it is waiting for, and it costs nothing while idle.
+ *
+ * Fire and forget. A failure to notify must never affect the run itself, which
+ * is already detached and none of our business once started.
+ */
+function watchRun(wt: string, command: string, startedAt: number): void {
+  void (async () => {
+    try {
+      const p = Bun.spawn([ZMX, "wait", runnerName(wt)], { stdout: "ignore", stderr: "ignore" });
+      // A run that outlives this is a run nobody is waiting on a push for.
+      const killer = setTimeout(() => p.kill(), WATCH_MAX_MS);
+      await p.exited;
+      clearTimeout(killer);
+
+      const st = await runState(wt);
+      if (st.running || st.exitCode === null) return; // killed, or superseded by a newer run
+      const push = buildRunPush(await readConfig(), {
+        worktree: wt,
+        command,
+        exitCode: st.exitCode,
+        seconds: Math.round((Date.now() - startedAt) / 1000),
+      });
+      if (push) await send(push);
+    } catch {
+      /* notifying is best effort; the run is what matters */
+    }
+  })();
+}
+
+/** Two hours: past this, a push about a build you started is just noise. */
+const WATCH_MAX_MS = 2 * 60 * 60_000;
 
 /** The runner's current screen plus whether anything is still going. */
 export async function runState(wt: string): Promise<RunState> {
