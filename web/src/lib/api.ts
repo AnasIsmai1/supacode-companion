@@ -76,11 +76,20 @@ export function usePoll<T>(path: string, ms: number) {
 export function useTurns(sessionId: string) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [connected, setConnected] = useState(false);
+  /**
+   * The first payload has arrived, whatever it contained.
+   *
+   * Without this there is no way to tell "still loading" from "this session
+   * genuinely has no messages": both are an empty array, and the chat showed a
+   * blank screen for either.
+   */
+  const [loaded, setLoaded] = useState(false);
   const seen = useRef(new Set<string>());
 
   useEffect(() => {
     seen.current = new Set();
     setTurns([]);
+    setLoaded(false);
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout>;
     let closed = false;
@@ -102,7 +111,7 @@ export function useTurns(sessionId: string) {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/ws/chat/${sessionId}`);
       ws.onopen = () => { setConnected(true); backoff = 500; };
-      ws.onmessage = (e) => merge(JSON.parse(e.data).turns ?? []);
+      ws.onmessage = (e) => { setLoaded(true); merge(JSON.parse(e.data).turns ?? []); };
       ws.onclose = () => {
         setConnected(false);
         if (closed) return;
@@ -120,5 +129,5 @@ export function useTurns(sessionId: string) {
     return () => { closed = true; clearTimeout(retry); document.removeEventListener("visibilitychange", wake); ws?.close(); };
   }, [sessionId]);
 
-  return { turns, connected };
+  return { turns, connected, loaded };
 }

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/dialog";
 import { get, post } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 
 /** Keys a phone keyboard doesn't have. Labelled, unlike the old number row. */
 const KEYS: { label: string; seq: string; wide?: boolean }[] = [
@@ -181,7 +182,16 @@ export function Terminal({ sessionId, title, onChat, onBack }: {
 
       {problem && <p role="alert" className="bg-error/10 px-4 py-2 text-sm text-error">{problem}</p>}
 
-      <Screen text={screen} className="min-h-0 flex-1 px-1 py-1" />
+      {screen ? (
+        <Screen text={screen} className="min-h-0 flex-1 px-1 py-1" />
+      ) : (
+        // A terminal frame has no shape worth guessing at, and an empty Screen
+        // is indistinguishable from a wedged one.
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-muted">
+          <Spinner className="size-6" />
+          <p className="text-sm">Reading the screen…</p>
+        </div>
+      )}
 
       <footer className="border-t border-line px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
         {/* Always empty: the keystroke goes straight down the wire and the

@@ -5,6 +5,7 @@ import { Select } from "@/components/ui/select";
 import { post, type Worktree } from "@/lib/api";
 import { Tree } from "@/views/Tree";
 import { ViewSkeleton } from "@/components/Skeleton";
+import { Spinner } from "@/components/ui/spinner";
 
 // Markdown, Shiki and xterm are only needed once you open something — keep them
 // out of the tree's first paint.
@@ -47,8 +48,23 @@ function parse(): Route {
   return { view: "tree" };
 }
 
-// Shaped like the view that is coming, so nothing shifts when it arrives.
-const Loading = () => <ViewSkeleton />;
+/**
+ * Shaped like the view that is coming.
+ *
+ * A chat and a terminal have no predictable layout, so those get a spinner; a
+ * list does, so it gets rows. One fixed fallback meant tapping into a chat
+ * flashed a screenful of session rows that were never going to appear.
+ */
+function Loading({ view }: { view: Route["view"] }) {
+  if (view === "chat" || view === "term") {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-muted">
+        <Spinner className="size-6" />
+      </div>
+    );
+  }
+  return <ViewSkeleton />;
+}
 
 export default function App() {
   const [route, setRoute] = useState<Route>(parse);
@@ -66,7 +82,7 @@ export default function App() {
     // must NOT scroll too. It did, which nested each view inside a second
     // scroller and let the headers drift off the top on a phone.
     <div className="h-full w-full overflow-hidden">
-      <Suspense fallback={<Loading />}>
+      <Suspense fallback={<Loading view={route.view} />}>
         {route.view === "chat" && (
           <Chat
             sessionId={route.id}

@@ -1,6 +1,7 @@
 import { AlertCircle, ArrowUp, Bot, ChevronDown, Check, ChevronLeft, FileDiff, ListChecks, ListTodo, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/Composer";
+import { Spinner } from "@/components/ui/spinner";
 import { AgentStrip } from "@/views/chat/AgentStrip";
 import { PromptCard } from "@/views/chat/PromptCard";
 import { TaskStrip } from "@/views/chat/TaskStrip";
@@ -32,7 +33,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
   onWork: (worktreeId: string) => void;
   onTodo: () => void;
 }) {
-  const { turns, connected } = useTurns(sessionId);
+  const { turns, connected, loaded } = useTurns(sessionId);
   const [meta, setMeta] = useState<{
     session: (Win & { title?: string; worktree?: string; surfaceId?: string }) | null;
     state: State | null;
@@ -242,6 +243,19 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
       )}
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        {/* A conversation has no predictable shape, so this is a spinner rather
+            than a skeleton. Before, an unloaded chat was simply a blank screen. */}
+        {!loaded && (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted">
+            <Spinner className="size-6" />
+            <p className="text-sm">{connected ? "Loading conversation…" : "Connecting…"}</p>
+          </div>
+        )}
+
+        {loaded && !turns.length && !live.length && (
+          <p className="py-20 text-center text-sm text-muted">Nothing in this session yet.</p>
+        )}
+
         {turns.map((t, i) => <TurnView key={t.uuid || i} t={t} />)}
 
         {live.map((e) => (
