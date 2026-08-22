@@ -15,6 +15,7 @@ import { MODES, readMode, setMode, type Mode } from "./lib/mode.ts";
 import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
 import { liveTool, readEvents } from "./lib/events.ts";
+import { tasksFor } from "./lib/tasks.ts";
 import { agentsFor } from "./lib/agents.ts";
 import { isUrgent, notify } from "./lib/notify.ts";
 import { recency, touchActed, touchViewed } from "./lib/presence.ts";
@@ -228,6 +229,10 @@ const server = Bun.serve<WSData>({
         // once the tool_result lands. So a long Bash shows as the live tool here
         // while state.lastTool still names the previous one.
         live: liveTool(await readEvents(sess[1], 30)),
+        // Claude's own task list. Not what tool just ran, but what it thinks it
+        // is working through. Cached on the transcript's mtime, since rebuilding
+        // means reading the whole file rather than a tail.
+        tasks: await tasksFor(sess[1]),
         // Reading the screen costs a zmx spawn (~500ms), so only pay it while the
         // session is actually working — idle polls stay on the transcript path.
         running: s.status === "busy" && s.zmx ? await runningOutput(s.zmx) : null,

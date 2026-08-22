@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowUp, Bot, ChevronDown, ChevronLeft, FileDiff, ListTodo, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, ArrowUp, Bot, ChevronDown, Check, ChevronLeft, FileDiff, ListChecks, ListTodo, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/Composer";
 import { AsciiPreview } from "@/components/AsciiPreview";
@@ -7,7 +7,7 @@ import { ModeSelect } from "@/components/ModeSelect";
 import { StatusLine, type Live, type State } from "@/components/StatusLine";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/dialog";
-import { get, post, useTurns, type Agent, type Pending, type Turn, type Win } from "@/lib/api";
+import { get, post, useTurns, type Agent, type Pending, type TaskList, type Turn, type Win } from "@/lib/api";
 import { ago, cn } from "@/lib/utils";
 
 /**
@@ -261,6 +261,86 @@ function TurnView({ t }: { t: Turn }) {
 }
 
 /**
+ * Claude's own task list.
+ *
+ * Not what tool just ran, but what Claude thinks it is working through. One
+ * real session here had 83 of them, so completed work is folded away by default
+ * and only what is in flight or still to come is shown up front.
+ */
+function TaskStrip({ list }: { list: TaskList }) {
+  const [open, setOpen] = useState(true);
+  const [showDone, setShowDone] = useState(false);
+  if (!list.counts.total) return null;
+
+  const { total, done, active } = list.counts;
+  const visible = showDone ? list.tasks : list.tasks.filter((t) => t.status !== "completed");
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div className="shrink-0 border-b border-line bg-surface/40">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex min-h-9 w-full min-w-0 cursor-pointer items-center gap-2 px-4 py-1.5 text-left
+                   transition-colors duration-200 hover:bg-raised
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+      >
+        <ChevronDown className={cn("size-3 shrink-0 text-faint transition-transform duration-200", !open && "-rotate-90")} aria-hidden />
+        <ListChecks className="size-3.5 shrink-0 text-faint" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-[11px] uppercase tracking-wider text-faint">
+          tasks <span className="tabular-nums">{done}/{total}</span>
+          {active > 0 && <span className="ml-1 text-accent">· {active} in progress</span>}
+        </span>
+        {/* A bar rather than a number: on a phone the shape is read faster. */}
+        <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-line" aria-label={`${pct}% done`}>
+          <span className="block h-full rounded-full bg-success transition-all duration-500" style={{ width: `${pct}%` }} />
+        </span>
+      </button>
+
+      {open && (
+        <>
+          <ul className="pb-1">
+            {visible.map((t) => (
+              <li key={t.id} className="flex min-w-0 items-start gap-2 px-4 py-1">
+                <span className="mt-1 shrink-0" aria-hidden>
+                  {t.status === "completed" ? (
+                    <Check className="size-3 text-success" />
+                  ) : t.status === "in_progress" ? (
+                    <span className="block size-1.5 animate-pulse rounded-full bg-accent" />
+                  ) : (
+                    <span className="block size-1.5 rounded-full border border-faint" />
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 text-[12px] leading-snug",
+                    t.status === "completed" ? "text-faint line-through" : t.status === "in_progress" ? "text-fg" : "text-muted",
+                  )}
+                >
+                  {t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject}
+                </span>
+              </li>
+            ))}
+            {!visible.length && (
+              <li className="px-4 py-1 text-[12px] text-faint">Everything here is done.</li>
+            )}
+          </ul>
+          {done > 0 && (
+            <button
+              onClick={() => setShowDone(!showDone)}
+              className="w-full cursor-pointer px-4 pb-1.5 text-left text-[11px] text-faint hover:text-muted
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+            >
+              {showDone ? "hide" : "show"} {done} done
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * Subagents running under this session.
  *
  * A session with three Tasks in flight otherwise reports only "busy", which tells
@@ -333,6 +413,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
     agents: Agent[];
     pending: Pending;
     live: Live;
+    tasks: TaskList | null;
   } | null>(null);
   const [text, setText] = useState("");
   const [echoes, setEchoes] = useState<Echo[]>([]);
@@ -356,7 +437,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
       if (document.hidden) return;
       try {
         const d = await get<any>(`/api/session/${sessionId}`);
-        if (alive) setMeta({ session: d.session, state: d.state, agents: d.agents ?? [], pending: d.pending, live: d.live ?? null });
+        if (alive) setMeta({ session: d.session, state: d.state, agents: d.agents ?? [], pending: d.pending, live: d.live ?? null, tasks: d.tasks ?? null });
       } catch { /* header only */ }
     };
     tick();
@@ -517,6 +598,8 @@ export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
         live={meta?.live ?? null}
         onInterrupt={() => post(`/api/interrupt/${sessionId}`).catch((e) => setError((e as Error).message))}
       />
+
+      {meta?.tasks && <TaskStrip list={meta.tasks} />}
 
       <AgentStrip agents={meta?.agents ?? []} />
 

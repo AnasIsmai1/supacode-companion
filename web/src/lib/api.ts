@@ -18,6 +18,9 @@ export type Pending =
   | { kind: "permission"; title: string; options: { key: string; label: string }[] }
   | null;
 export type Tool = { name: string; summary: string };
+export type TaskStatus = "pending" | "in_progress" | "completed";
+export type Task = { id: string; subject: string; description: string; activeForm: string; status: TaskStatus };
+export type TaskList = { tasks: Task[]; counts: { total: number; done: number; active: number } };
 export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed" | "untracked";
 export type DiffFile = {
   path: string; oldPath?: string; status: DiffFileStatus;
