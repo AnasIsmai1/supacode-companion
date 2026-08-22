@@ -140,10 +140,15 @@ export function buildPush(
 
   const urgent = isUrgent(o.type);
   const actionable_ = Boolean(o.options?.length) && actionable(cfg.dashUrl);
+  // Spell the options out even when the buttons are unavailable: reading them
+  // on the lock screen still beats opening the app to find out what was asked.
+  const body = o.options?.length && urgent
+    ? `${o.message}\n\n${optionLines(o.options)}`
+    : o.message;
   const push: Push = {
     topic: cfg.topic,
     title: o.project,
-    message: o.message,
+    message: body.slice(0, 3500),
     tags: [urgent ? "bell" : "speech_balloon"],
     priority: !urgent ? PRIORITY.idle : actionable_ ? PRIORITY.actionable : PRIORITY.informational,
   };
@@ -182,17 +187,42 @@ export function buildRunPush(
   return push;
 }
 
+export type Option = { key: string; label: string; description?: string };
+
 /** Options for whatever this session is currently waiting on, if anything. */
-export async function pendingOptions(sessionId: string): Promise<{ key: string; label: string }[]> {
+export async function pendingOptions(sessionId: string): Promise<Option[]> {
   const s = (await listSessions()).find((x) => x.sessionId === sessionId);
   const p = await pending(sessionId, s?.zmx ?? null);
   if (!p) return [];
   if (p.kind === "permission" || p.kind === "live-question") return p.options;
-  // An AskUserQuestion from the transcript numbers its options by position.
+  // An AskUserQuestion from the transcript numbers its options by position, and
+  // is the only shape that carries descriptions at all.
   if (p.kind === "question") {
-    return (p.questions[0]?.options ?? []).map((c, i) => ({ key: String(i + 1), label: c.label }));
+    return (p.questions[0]?.options ?? []).map((c, i) => ({
+      key: String(i + 1),
+      label: c.label,
+      description: c.description,
+    }));
   }
   return [];
+}
+
+/**
+ * The options, spelled out in the notification body.
+ *
+ * A button label is capped at 24 characters, so "Yes, and don't ask again,
+ * allow all edits" arrives as "Yes, and don't ask again". You cannot choose
+ * between options you can only half read. The body has room, so put the full
+ * text there and let the buttons be the shortcut rather than the only source.
+ */
+export function optionLines(options: Option[]): string {
+  return options
+    .map((o) => {
+      const head = `${o.key}. ${o.label}`.slice(0, 160);
+      const desc = o.description?.replace(/\s+/g, " ").trim();
+      return desc ? `${head}\n   ${desc.slice(0, 200)}` : head;
+    })
+    .join("\n");
 }
 
 export async function send(push: Push): Promise<boolean> {
@@ -354,6 +384,26 @@ if (import.meta.main) {
   assert.equal(idle.priority, 2, "you have not typed lately; nothing is blocked");
   assert.equal(idle.actions, undefined, "an idle nudge has nothing to answer");
   assert.deepEqual(idle.tags, ["speech_balloon"]);
+
+  // --- the body must carry what the buttons cannot ---
+  assert.equal(
+    optionLines([{ key: "1", label: "Yes" }, { key: "2", label: "No" }]),
+    "1. Yes\n2. No",
+  );
+  assert.equal(
+    optionLines([{ key: "1", label: "Yes", description: "does   the\n thing" }]),
+    "1. Yes\n   does the thing",
+    "descriptions are included and whitespace collapsed",
+  );
+
+  const spelled = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude needs your permission",
+    options: opts, type: "permission_prompt",
+  })!;
+  // The label the button shows is cut at 24 chars; the full text must survive
+  // in the body or you are choosing between options you can only half read.
+  assert.ok(spelled.message.includes("2. Yes, and don't ask again, allow all edits"));
+  assert.ok(spelled.actions![1].label.length === LABEL_MAX);
 
   const perm = buildPush(good, {
     sessionId: "sid", project: "repo", message: "Claude needs your permission",
