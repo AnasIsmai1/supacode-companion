@@ -15,6 +15,15 @@ import { existsSync } from "node:fs";
 
 /** One gh call is ~1s against the network, so the whole view is cached. */
 const TTL_MS = 30_000;
+/**
+ * Failures expire faster than successes.
+ *
+ * A wrong gh account, a dropped network or an unauthenticated shell all land
+ * here, and holding that answer for the full TTL means fixing the cause and
+ * still being told it is broken for another half minute. A success is stable;
+ * a failure is usually something you are actively fixing.
+ */
+const ERROR_TTL_MS = 5_000;
 const cache = new Map<string, { at: number; value: Result }>();
 
 /**
@@ -175,7 +184,8 @@ export function classify(err: string): string | null {
 /** The PR for this worktree's branch. */
 export async function view(wt: string, force = false): Promise<Result> {
   const hit = cache.get(wt);
-  if (!force && hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  const ttl = hit?.value.error ? ERROR_TTL_MS : TTL_MS;
+  if (!force && hit && Date.now() - hit.at < ttl) return hit.value;
 
   const r = await gh(wt, ["pr", "view", "--json", FIELDS]);
   let value: Result;
@@ -312,6 +322,9 @@ if (import.meta.main) {
   );
   assert.equal(classify("gh is not installed"), "gh is not installed");
   assert.equal(classify("fatal: not a git repository"), null);
+
+  // A failure must not be held as long as a success: you are usually mid-fix.
+  assert.ok(ERROR_TTL_MS < TTL_MS, "errors expire sooner than results");
   assert.equal((await comment(tmp, "  ")).error, "empty comment");
   await Bun.spawn(["rm", "-rf", tmp]).exited;
 
