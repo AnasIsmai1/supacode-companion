@@ -3,14 +3,20 @@
 // These need the Supacode app running — the CLI talks to /tmp/supacode-501/pid-*.
 // If it is closed they fail; callers surface the error rather than guessing.
 
-async function run(args: string[]): Promise<{ ok: boolean; out: string }> {
+async function run(args: string[], timeoutMs = 15_000): Promise<{ ok: boolean; out: string }> {
   const p = Bun.spawn(["supacode", ...args], { stdout: "pipe", stderr: "pipe" });
+  // The CLI's own --timeout defaults to 180 SECONDS, so without this a single
+  // call can hold a request open for three minutes and the phone just spins.
+  // lib/worktrees.ts has guarded against exactly this since it was written;
+  // this module never did.
+  const killer = setTimeout(() => p.kill(), timeoutMs);
   const [out, err] = await Promise.all([
     new Response(p.stdout).text(),
     new Response(p.stderr).text(),
   ]);
   const ok = (await p.exited) === 0;
-  return { ok, out: (ok ? out : err).trim() };
+  clearTimeout(killer);
+  return { ok, out: (ok ? out : err).trim() || (ok ? "" : "supacode timed out or is not running") };
 }
 
 export function appRunning(): boolean {
@@ -32,6 +38,7 @@ export function startClaude(worktreeId: string, title?: string) {
 export function newWorktree(o: {
   repo: string; branch: string; base?: string; fetch?: boolean;
 }) {
+  // Longer than the rest: this one clones and checks out.
   return run([
     "repo", "worktree-new",
     "--repo", o.repo,
@@ -39,7 +46,7 @@ export function newWorktree(o: {
     ...(o.base ? ["--base", o.base] : []),
     ...(o.fetch ? ["--fetch"] : []),
     "--background",
-  ]);
+  ], 120_000);
 }
 
 /** Add a folder to Supacode as a project. */

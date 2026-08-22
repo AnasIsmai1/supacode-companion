@@ -433,7 +433,9 @@ const server = Bun.serve<WSData>({
     // button at /api/answer would type a real digit into a real session, so the
     // test path gets its own no-op that only records the round trip.
     if (p === "/api/notify/ack" && req.method === "POST") {
-      lastAck = { at: Date.now(), body: await req.text().catch(() => "") };
+      // Capped: this is reachable by anything on the tailnet and used to keep
+      // whatever it was handed. 200KB of "A" stayed resident.
+      lastAck = { at: Date.now(), body: (await req.text().catch(() => "")).slice(0, 500) };
       console.log(`notify ack ${new Date(lastAck.at).toISOString()} ${lastAck.body.slice(0, 120)}`);
       return json({ ok: true, at: lastAck.at });
     }
@@ -533,6 +535,9 @@ const server = Bun.serve<WSData>({
     if (p === "/api/window" && req.method === "POST") {
       const { worktree, input, title } = (await req.json().catch(() => ({}))) as Record<string, string>;
       if (!worktree) return json({ error: "worktree required" }, 400);
+      // Same containment as /api/diff and /api/run: the worktree list is the
+      // allowlist. This route accepted any string before.
+      if (!(await resolveWorktree(worktree))) return json({ error: "unknown worktree" }, 404);
       const r = await newWindow(worktree, input || "claude", title);
       return r.ok ? json({ ok: true, tab: r.out }) : json({ error: r.out || "supacode failed" }, 502);
     }

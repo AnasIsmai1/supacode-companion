@@ -39,15 +39,22 @@ const asText = (c: unknown): string =>
     : "";
 
 /**
- * Replay TaskCreate and TaskUpdate into the current list.
+ * Everything needed to carry a partial replay across reads.
  *
- * Exported so a fixture can drive it: reading a real transcript is slow and the
- * ordering rules are the part worth testing.
+ * `pendingCreate` matters as much as `tasks`: a TaskCreate can land at the end
+ * of one chunk and its result, which is the only place the id appears, at the
+ * start of the next.
  */
-export function replay(records: any[]): Task[] {
-  const tasks = new Map<string, Task>();
-  // tool_use_id -> the input we saw, waiting for the result that names its id.
-  const pendingCreate = new Map<string, { subject: string; description: string; activeForm: string }>();
+export type ReplayState = {
+  tasks: Map<string, Task>;
+  pendingCreate: Map<string, { subject: string; description: string; activeForm: string }>;
+};
+
+export const newState = (): ReplayState => ({ tasks: new Map(), pendingCreate: new Map() });
+
+/** Fold more records into a running replay. */
+export function apply(state: ReplayState, records: any[]): void {
+  const { tasks, pendingCreate } = state;
 
   for (const d of records) {
     for (const b of (d?.message?.content ?? [])) {
@@ -90,7 +97,13 @@ export function replay(records: any[]): Task[] {
     }
   }
 
-  return [...tasks.values()];
+}
+
+/** Replay from nothing. The shape the self-check drives. */
+export function replay(records: any[]): Task[] {
+  const state = newState();
+  apply(state, records);
+  return [...state.tasks.values()];
 }
 
 /** In progress first, then pending, then done. Within a group, creation order. */
@@ -109,35 +122,25 @@ export type TaskList = {
 const EMPTY: TaskList = { tasks: [], counts: { total: 0, done: 0, active: 0 } };
 
 /**
- * Cached on the transcript's mtime.
+ * Read forward, never re-read.
  *
- * Rebuilding means reading the whole file, not a tail: task #1 can be hours of
- * conversation back, and an update to it can be in the last line. One session
- * here has 83 tasks over a multi-megabyte transcript, so this must not run on
- * every 3s poll.
+ * The list cannot be rebuilt from a tail: task #1 can be hours back and an
+ * update to it can be in the last line. The first version therefore re-read the
+ * whole file whenever the mtime moved, and the mtime moves constantly on a busy
+ * session. Measured: this repo's own transcript is 5.4MB and changes inside
+ * every 3s poll, and the largest here is 55MB. Re-reading that twenty times a
+ * minute for one open chat is not defensible.
+ *
+ * So the replay state is kept and only the bytes appended since last time are
+ * parsed. A shrinking file means it was truncated or rotated, which is the one
+ * case that starts over.
  */
-const cache = new Map<string, { mtime: number; value: TaskList }>();
+type Entry = { offset: number; state: ReplayState; value: TaskList };
+const cache = new Map<string, Entry>();
 
-export async function tasksFor(sessionId: string): Promise<TaskList> {
-  const path = await transcriptPath(sessionId);
-  if (!path) return EMPTY;
-
-  let mtime = 0;
-  try { mtime = statSync(path).mtimeMs; } catch { return EMPTY; }
-  const hit = cache.get(sessionId);
-  if (hit && hit.mtime === mtime) return hit.value;
-
-  const text = await Bun.file(path).text();
-  const records: any[] = [];
-  for (const line of text.split("\n")) {
-    // Cheap pre-filter. Parsing every line of a multi-megabyte transcript is the
-    // expensive part and only two tool names matter here.
-    if (!line.includes("TaskCreate") && !line.includes("TaskUpdate") && !line.includes("created successfully")) continue;
-    try { records.push(JSON.parse(line)); } catch { /* torn line */ }
-  }
-
-  const tasks = order(replay(records));
-  const value: TaskList = {
+function summarise(state: ReplayState): TaskList {
+  const tasks = order([...state.tasks.values()]);
+  return {
     tasks,
     counts: {
       total: tasks.length,
@@ -145,8 +148,49 @@ export async function tasksFor(sessionId: string): Promise<TaskList> {
       active: tasks.filter((t) => t.status === "in_progress").length,
     },
   };
-  cache.set(sessionId, { mtime, value });
-  return value;
+}
+
+/** Only two tool names matter, so most lines never reach JSON.parse. */
+function parseChunk(text: string): any[] {
+  const out: any[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.includes("TaskCreate") && !line.includes("TaskUpdate") && !line.includes("created successfully")) continue;
+    try { out.push(JSON.parse(line)); } catch { /* torn line */ }
+  }
+  return out;
+}
+
+export async function tasksFor(sessionId: string): Promise<TaskList> {
+  const path = await transcriptPath(sessionId);
+  if (!path) return EMPTY;
+
+  let size = 0;
+  try { size = statSync(path).size; } catch { return EMPTY; }
+
+  let hit = cache.get(sessionId);
+  // Truncated or rotated: the offset we hold points into a file that no longer
+  // exists in that shape, so anything after it would be misread.
+  if (hit && size < hit.offset) hit = undefined;
+  if (hit && size === hit.offset) return hit.value;
+
+  const entry: Entry = hit ?? { offset: 0, state: newState(), value: EMPTY };
+  const file = Bun.file(path);
+  const text = await file.slice(entry.offset, size).text();
+
+  // The read almost certainly ends mid-line. Stop at the last newline and leave
+  // the remainder for the next call, or a half-written record is dropped.
+  const cut = text.lastIndexOf("\n");
+  if (cut < 0) {
+    // Nothing complete yet. Hold the offset so the partial line is re-read.
+    cache.set(sessionId, entry);
+    return entry.value;
+  }
+
+  apply(entry.state, parseChunk(text.slice(0, cut)));
+  entry.offset += cut + 1;
+  entry.value = summarise(entry.state);
+  cache.set(sessionId, entry);
+  return entry.value;
 }
 
 if (import.meta.main) {
@@ -217,6 +261,67 @@ if (import.meta.main) {
     ["2", "1", "4", "3"],
     "in progress, then pending in creation order, then done",
   );
+
+  // --- incremental reads: the state must survive a chunk boundary ---
+  // The id only exists in the RESULT, so a create at the end of one read and
+  // its result at the start of the next is the case that breaks a naive tail.
+  {
+    const { mkdtempSync, appendFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join: j } = await import("node:path");
+
+    const st = newState();
+    apply(st, [create("u1", "split across reads")]);
+    assert.equal(st.tasks.size, 0, "a create with no result yet is not a task");
+    assert.equal(st.pendingCreate.size, 1, "but it is remembered for the next chunk");
+
+    apply(st, [result("u1", "Task #5 created successfully: split across reads")]);
+    assert.equal(st.tasks.get("5")?.subject, "split across reads", "the pairing survived the boundary");
+    assert.equal(st.pendingCreate.size, 0, "and is not left dangling");
+
+    // An update in a later chunk still lands on a task created in an earlier one.
+    apply(st, [update("5", "in_progress")]);
+    assert.equal(st.tasks.get("5")?.status, "in_progress");
+
+    // --- and end to end, over a file that grows between calls ---
+    const dir = mkdtempSync(j(tmpdir(), "companion-tasks-"));
+    const sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const proj = j(dir, "proj");
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(proj, { recursive: true });
+    const file = j(proj, `${sid}.jsonl`);
+    const w = (o: unknown) => appendFileSync(file, JSON.stringify(o) + "\n");
+
+    w(create("v1", "first"));
+    w(result("v1", "Task #1 created successfully: first"));
+    // tasksFor resolves the path by glob under ~/.claude/projects, so drive the
+    // offset logic directly rather than faking a home directory.
+    const readForward = async (offset: number, state: ReplayState) => {
+      const size = (await import("node:fs")).statSync(file).size;
+      const text = await Bun.file(file).slice(offset, size).text();
+      const cut = text.lastIndexOf("\n");
+      apply(state, parseChunk(text.slice(0, cut)));
+      return offset + cut + 1;
+    };
+    const live = newState();
+    let off = await readForward(0, live);
+    assert.equal(live.tasks.size, 1);
+    assert.equal(off, (await import("node:fs")).statSync(file).size, "consumed every complete line");
+
+    // Append a create whose result has not been written yet.
+    w(create("v2", "second"));
+    off = await readForward(off, live);
+    assert.equal(live.tasks.size, 1, "still one task; the second has no id yet");
+
+    w(result("v2", "Task #2 created successfully: second"));
+    w(update("1", "completed"));
+    off = await readForward(off, live);
+    assert.equal(live.tasks.size, 2, "the second task appeared from the later chunk");
+    assert.equal(live.tasks.get("1")?.status, "completed");
+    assert.equal(live.tasks.get("2")?.subject, "second");
+
+    await Bun.spawn(["rm", "-rf", dir]).exited;
+  }
 
   // --- against the real transcript that has 83 of them ---
   const { readdirSync } = await import("node:fs");

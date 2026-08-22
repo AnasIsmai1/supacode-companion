@@ -178,8 +178,13 @@ async function ghPrUrl(wt: string, branch: string): Promise<string | null> {
     const p = Bun.spawn(["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"], {
       cwd: wt, stdout: "pipe", stderr: "ignore", env: { ...process.env, GH_PROMPT_DISABLED: "1" },
     });
+    // Every other spawn in this file is bounded; this one went over the network
+    // with nothing capping it.
+    const killer = setTimeout(() => p.kill(), 30_000);
     const out = await new Response(p.stdout).text();
-    return (await p.exited) === 0 ? out.trim() || null : null;
+    const code = await p.exited;
+    clearTimeout(killer);
+    return code === 0 ? out.trim() || null : null;
   } catch {
     return null;
   }
