@@ -4,7 +4,7 @@ import { Composer } from "@/components/Composer";
 import { AsciiPreview } from "@/components/AsciiPreview";
 import { Markdown } from "@/components/Markdown";
 import { ModeSelect } from "@/components/ModeSelect";
-import { StatusLine, type State } from "@/components/StatusLine";
+import { StatusLine, type Live, type State } from "@/components/StatusLine";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/dialog";
 import { get, post, useTurns, type Agent, type Pending, type Turn, type Win } from "@/lib/api";
@@ -317,7 +317,7 @@ const isArt = (v: string) => /[│┃─━┌┐└┘├┤┬┴┼╭╮╰�
 const GRACE_MS = 8000;
 
 /** Locally-echoed message, shown until the transcript catches up. */
-type Echo = { id: number; text: string; failed: boolean; confirmed: boolean };
+type Echo = { id: number; text: string; failed: boolean; confirmed: boolean; queued?: boolean };
 
 export function Chat({ sessionId, onBack, onTerminal, onWork }: {
   sessionId: string;
@@ -331,6 +331,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
     state: State | null;
     agents: Agent[];
     pending: Pending;
+    live: Live;
   } | null>(null);
   const [text, setText] = useState("");
   const [echoes, setEchoes] = useState<Echo[]>([]);
@@ -340,13 +341,21 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
   const [closing, setClosing] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // A share-sheet handoff leaves the file refs and text here; consume once.
+  useEffect(() => {
+    const handoff = sessionStorage.getItem(`share:${sessionId}`);
+    if (!handoff) return;
+    sessionStorage.removeItem(`share:${sessionId}`);
+    setText((prev) => `${handoff} ${prev}`.trim());
+  }, [sessionId]);
+
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       if (document.hidden) return;
       try {
         const d = await get<any>(`/api/session/${sessionId}`);
-        if (alive) setMeta({ session: d.session, state: d.state, agents: d.agents ?? [], pending: d.pending });
+        if (alive) setMeta({ session: d.session, state: d.state, agents: d.agents ?? [], pending: d.pending, live: d.live ?? null });
       } catch { /* header only */ }
     };
     tick();
@@ -389,10 +398,11 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
     setEchoes((prev) => [...prev, { id, text: body, failed: false, confirmed: false }]);
     setError(null);
     post(`/api/send/${sessionId}`, { text: body })
-      .then(() => {
+      .then((r) => {
         // /api/send verifies the message actually left the input box, so an ok
-        // here means it really landed.
-        setEchoes((prev) => prev.map((x) => (x.id === id ? { ...x, confirmed: true } : x)));
+        // here means it really landed — in the turn, or in Claude's queue.
+        const queued = Boolean((r as { queued?: boolean })?.queued);
+        setEchoes((prev) => prev.map((x) => (x.id === id ? { ...x, confirmed: true, queued } : x)));
       })
       .catch((e) => {
         // An echo that lied is worse than no echo — mark it, don't leave it looking sent.
@@ -490,6 +500,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
         state={meta?.state ?? null}
         status={meta?.session?.status ?? null}
         waiting={Boolean(meta?.pending)}
+        live={meta?.live ?? null}
         onInterrupt={() => post(`/api/interrupt/${sessionId}`).catch((e) => setError((e as Error).message))}
       />
 
@@ -517,7 +528,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
               {e.failed
                 ? <span className="flex items-center gap-1 text-error"><AlertCircle className="size-3" aria-hidden /> not sent</span>
                 : e.confirmed
-                  ? <span className="text-faint">sent</span>
+                  ? <span className="text-faint">{e.queued ? "queued" : "sent"}</span>
                   : <span className="text-muted">sending…</span>}
             </p>
             <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{e.text}</p>

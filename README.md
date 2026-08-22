@@ -7,12 +7,28 @@ conversation, and sends replies into the real session.
 ## Run
 
 ```sh
-cd web && bun run build      # REQUIRED after any change under web/
-cd .. && bun run server.ts   # or: launchctl kickstart -k gui/$(id -u)/com.nas.supacode-companion
-tailscale serve --bg 7777    # https://<your-machine>.ts.net
+bin/sup up          # build web, install the launchd job, ensure tailscale serve
+bin/sup status      # is the whole chain up?
+bin/sup restart
 ```
 
-Under launchd already: `~/Library/LaunchAgents/com.nas.supacode-companion.plist`.
+`sup up` generates `~/Library/LaunchAgents/com.nas.supacode-companion.plist` from
+this checkout; it is not committed, because it needs absolute paths.
+
+`sup status` probes all five links, not just the one launchd knows about:
+
+```
+  OK  launchd          running pid 2549 - 86 runs
+  OK  port 7777        listening
+  OK  http             HTTP 200 - 21 live sessions
+  OK  tailscale serve  proxying to :7777
+  --  tailnet          Pixel 8 Pro OFFLINE
+```
+
+That last line is the point. launchd cannot see `tailscale serve` or whether the
+phone is on the tailnet, so it reports a healthy job while the phone gets
+nothing - which from the phone is indistinguishable from the server being down.
+
 Logs in `logs/companion.log` and `logs/companion.err`.
 
 Client dev loop with hot reload: `cd web && bun run dev` (proxies `/api` and `/ws`
@@ -49,6 +65,22 @@ statuslines exist — `manual mode on`, `accept edits on`, `auto mode on`,
 `plan mode on`, `bypass permissions on` — and they must not be conflated, or a
 switch will stop on the wrong one and still report success.
 
+## What the worktree view can do
+
+`/w?wt=<id>` is the other half of the app. The session views key on a session;
+diff, runs and git belong to the **worktree**, and have to work while a session
+is busy, modal or dead - which is exactly when you want them.
+
+- **Changes** - everything the branch changed since its fork point, so commits
+  Claude already made show up too, not just uncommitted work. The file list
+  paints first and each patch loads on expand.
+- **Run** - one tap for any script in the worktree's `package.json`, or type a
+  command. It runs under `zmx run -d`, so it survives the phone locking and this
+  server restarting, and `ZMX_TASK_COMPLETED` gives an exact exit code rather
+  than a guess parsed from the output.
+- **Actions** - commit, push, open a PR, restore one file, discard everything.
+  Force-push is not reachable from here at all.
+
 ## What the chat can do
 
 - Markdown with GFM tables and syntax-highlighted code (Shiki, lazy-loaded per
@@ -80,6 +112,10 @@ Install the ntfy Android app and subscribe to that topic.
 ## Check
 
 ```sh
-bun test.ts                  # parsers, grouping, send payload, path containment
-shellcheck hooks/notify.sh
+bun run check                # tsc over server.ts and lib/
+bun run test                 # eight assert-based self-checks, plus shellcheck
 ```
+
+Every non-trivial module carries its own `bun <file>` self-check rather than a
+test framework. `bun run check` exists because nothing type-checked the server
+before, which is how `startClaude` shipped used-but-not-imported.

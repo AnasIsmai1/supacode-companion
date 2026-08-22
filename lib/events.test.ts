@@ -8,7 +8,7 @@
 import { strict as assert } from "node:assert";
 import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readEvents, eventsPath, EVENTS_DIR } from "./events.ts";
+import { readEvents, eventsPath, liveTool, EVENTS_DIR } from "./events.ts";
 
 const SID = "00000000-0000-0000-0000-00000000feed";
 // fileURLToPath, not .pathname: this repo lives under "Nuclear Codes" and
@@ -78,4 +78,35 @@ assert.ok(big.text!.length > 0 && big.text!.length <= 600, `capped, got ${big.te
 
 rmSync(eventsPath(SID), { force: true });
 assert.ok(eventsPath(SID).startsWith(EVENTS_DIR), "path is watchable and under EVENTS_DIR");
+
+// --- liveTool: a pre with no post is the thing that is running now ---
+const mk = (o: Partial<import("./events.ts").SessionEvent>) =>
+  ({ at: 1, ev: "pre", ...o }) as import("./events.ts").SessionEvent;
+
+assert.equal(liveTool([]), null, "nothing running");
+assert.deepEqual(
+  liveTool([mk({ ev: "pre", tool: "Bash", info: "bun test", id: "t1", at: 5 })]),
+  { tool: "Bash", info: "bun test", since: 5 },
+  "an unmatched pre is in flight",
+);
+assert.equal(
+  liveTool([mk({ ev: "pre", tool: "Bash", id: "t1" }), mk({ ev: "post", tool: "Bash", id: "t1" })]),
+  null,
+  "a matched pre/post pair has finished",
+);
+assert.deepEqual(
+  liveTool([
+    mk({ ev: "pre", tool: "Read", id: "t1" }),
+    mk({ ev: "post", tool: "Read", id: "t1" }),
+    mk({ ev: "pre", tool: "Bash", info: "build", id: "t2", at: 9 }),
+  ]),
+  { tool: "Bash", info: "build", since: 9 },
+  "the newest unmatched pre wins",
+);
+assert.equal(
+  liveTool([mk({ ev: "pre", tool: "Bash", id: "t1" }), mk({ ev: "stop" })]),
+  null,
+  "a finished turn has nothing in flight, even with an unmatched pre",
+);
+
 console.log("ok");

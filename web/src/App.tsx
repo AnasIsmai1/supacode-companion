@@ -13,12 +13,14 @@ const Browse = lazy(() => import("@/views/Browse").then((m) => ({ default: m.Bro
 // The diff renderer is the heaviest thing in the app; it must not be in the
 // tree's first paint either.
 const Work = lazy(() => import("@/views/Work").then((m) => ({ default: m.Work })));
+const Share = lazy(() => import("@/views/Share").then((m) => ({ default: m.Share })));
 
 type Route =
   | { view: "tree" }
   | { view: "chat"; id: string }
   | { view: "term"; id: string; title: string }
   | { view: "work"; wt: string }
+  | { view: "share"; id: string }
   | { view: "browse" };
 
 function parse(): Route {
@@ -29,6 +31,9 @@ function parse(): Route {
     return { view: "term", id: m[1], title: new URLSearchParams(location.search).get("t") ?? "terminal" };
   }
   if (p === "/browse") return { view: "browse" };
+  // /share-target stashes the files and redirects here. Without this case the
+  // redirect fell through to the tree and the stash quietly expired.
+  if ((m = p.match(/^\/share\/([0-9a-f-]{36})$/i))) return { view: "share", id: m[1] };
   // Worktree ids are already percent-encoded paths, so they travel as a query
   // param: as a path segment they decode back into slashes and stop matching.
   if (p === "/w") {
@@ -66,6 +71,9 @@ export default function App() {
           <Terminal sessionId={route.id} title={route.title} onChat={null} onBack={() => go("/")} />
         )}
         {route.view === "work" && <Work wt={route.wt} onBack={() => go("/")} />}
+        {route.view === "share" && (
+          <Share id={route.id} onOpen={(sid) => go(`/s/${sid}`)} onBack={() => go("/")} />
+        )}
         {route.view === "browse" && <Browse onDone={() => go("/")} />}
       </Suspense>
 

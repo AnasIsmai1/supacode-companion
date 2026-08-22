@@ -14,6 +14,7 @@ import { pending, pendingLiveQuestion } from "./lib/prompts.ts";
 import { MODES, readMode, setMode, type Mode } from "./lib/mode.ts";
 import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
+import { liveTool, readEvents } from "./lib/events.ts";
 import { agentsFor } from "./lib/agents.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
@@ -163,8 +164,12 @@ const server = Bun.serve<WSData>({
 
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
+      // A message accepted mid-turn goes into Claude's OWN queue, not the
+      // transcript, and can sit there for minutes. Reporting that as "sent" is
+      // how the echo ends up claiming something that has not happened yet.
+      const queued = s.status === "busy";
       return (await sendText(s.zmx, String(text)))
-        ? json({ ok: true })
+        ? json({ ok: true, queued })
         : json({ error: "zmx send failed" }, 502);
     }
 
@@ -210,6 +215,10 @@ const server = Bun.serve<WSData>({
         },
         state: { ...state, mode: fromTranscript(state.permissionMode) },
         agents: await agentsFor(sess[1]),
+        // Hooks fire the instant a tool starts; the transcript only records it
+        // once the tool_result lands. So a long Bash shows as the live tool here
+        // while state.lastTool still names the previous one.
+        live: liveTool(await readEvents(sess[1], 30)),
         // Reading the screen costs a zmx spawn (~500ms), so only pay it while the
         // session is actually working — idle polls stay on the transcript path.
         running: s.status === "busy" && s.zmx ? await runningOutput(s.zmx) : null,

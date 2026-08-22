@@ -29,9 +29,11 @@ const elapsed = (from: number) => {
  * One line, five facts. Every value comes from the transcript — no zmx spawn, so
  * this costs nothing to keep current. Deliberately does not grow into a dashboard.
  */
+export type Live = { tool: string; info?: string; since: number } | null;
+
 export function StatusLine({
-  state, status, waiting, onInterrupt,
-}: { state: State | null; status: string | null; waiting: boolean; onInterrupt?: () => void }) {
+  state, status, waiting, live, onInterrupt,
+}: { state: State | null; status: string | null; waiting: boolean; live?: Live; onInterrupt?: () => void }) {
   const [, tick] = useState(0);
   const working = status === "busy";
 
@@ -44,12 +46,18 @@ export function StatusLine({
 
   if (!state) return null;
 
+  // The hook stream knows what is running now; the transcript only knows what
+  // finished. During a four-minute build those are different answers, and the
+  // stale one is the one that reads like a hang.
+  const tool = live ? `${live.tool}${live.info ? ` ${live.info}` : ""}` : state.lastTool;
   const Icon = waiting ? AlertCircle : working ? Loader2 : status === "shell" ? CircleDot : Check;
   const tone = waiting ? "text-warning" : working ? "text-accent" : "text-faint";
   const label = waiting
     ? "waiting on you"
     : working
-      ? `${state.lastTool ?? "working"}${state.lastActivity ? ` · ${elapsed(state.lastActivity)}` : ""}`
+      // `live.since` is when the tool actually started, which is what you want
+      // to see ticking; lastActivity is the last transcript write.
+      ? `${tool ?? "working"} · ${elapsed(live?.since ?? state.lastActivity ?? Date.now())}`
       : "idle";
 
   return (

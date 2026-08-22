@@ -31,6 +31,17 @@ const RULE = /^─{8,}/;
 // truncated summary, so neither may match. Column zero only, so a tool's own
 // "⎿  Running…" stays in the output where it belongs.
 const SPINNER = /^[^\w\s]\s+[A-Za-z][^\s(]*…/u;
+
+// The live meter the spinner carries: "(4m 18s · ↓ 14.3k tokens · esc to
+// interrupt)". The verb is random but this shape is stable for the whole turn,
+// and a finished turn collapses to a past-tense summary with no parens at all
+// ("✻ Churned for 56s"). Primary signal.
+const METER = /\(\d+m?\s?\d*s\b[^)]*\btokens?\b/i;
+
+// Fallback only. This footer ROTATES through other hints mid-turn ("← for
+// agents", "PR #96", tips), so on its own it blinks in and out and the busy
+// state flickers with it. Learned from omg.dev, which keys off the meter for
+// exactly this reason.
 const INTERRUPT = /esc to interrupt/;
 
 // The mobile-app tip that hangs off the spinner, and its wrapped URL.
@@ -66,13 +77,15 @@ export function parseRunning(screen: string, max = 40): Running | null {
   if (top < 0) return null; // no input box: not a Claude Code screen
 
   const near = lines.slice(Math.max(0, top - 10), top);
-  if (!near.some((l) => INTERRUPT.test(l) || SPINNER.test(l))) return null;
+  if (!near.some((l) => METER.test(l) || SPINNER.test(l) || INTERRUPT.test(l))) return null;
 
   const body = lines.slice(0, top);
   let hints = 1;
   while (body.length) {
     const l = body[body.length - 1];
-    if (!l.trim() || TIP.test(l) || SPINNER.test(l)) body.pop();
+    // METER as well as SPINNER: on a frame where the glyph has not rendered,
+    // the bare meter is still chrome and must not land in the output.
+    if (!l.trim() || TIP.test(l) || SPINNER.test(l) || METER.test(l)) body.pop();
     else if (hints && l.search(/\S/) >= HINT_INDENT) { hints--; body.pop(); }
     else break;
   }
@@ -125,6 +138,18 @@ if (import.meta.main) {
   const idle = busy.replace("  ⎿  Running…", "  ⎿  12 pass, 0 fail")
     .replace("✻ Catapulting… (4m 18s · ↓ 14.3k tokens · esc to interrupt)", "✻ Churned for 56s");
   assert.equal(parseRunning(idle), null);
+
+  // The footer rotates: mid-turn the "esc to interrupt" hint is replaced by a
+  // different tip. The meter is still there, so this is still running — keying
+  // on the hint alone made the busy state flicker.
+  const rotated = busy.replace("✻ Catapulting… (4m 18s · ↓ 14.3k tokens · esc to interrupt)",
+                               "✽ Ruminating… (1m 02s · ↓ 2.1k tokens · ← for agents)");
+  assert.deepEqual(parseRunning(rotated)!.lines, r.lines);
+
+  // And with no spinner glyph at all, the meter alone still carries it.
+  const meterOnly = busy.replace("✻ Catapulting… (4m 18s · ↓ 14.3k tokens · esc to interrupt)",
+                                 "  (2m 10s · ↓ 900 tokens)");
+  assert.deepEqual(parseRunning(meterOnly)!.lines, r.lines);
 
   // A plain shell has no input box, so there is nothing to report.
   assert.equal(parseRunning("~/src ❯ ls\nfoo bar\n~/src ❯ "), null);

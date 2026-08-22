@@ -64,3 +64,26 @@ export async function readEvents(sessionId: string, limit = 50): Promise<Session
   }
   return out.slice(-limit);
 }
+
+/**
+ * The tool that is running RIGHT NOW, if any.
+ *
+ * A `pre` with no matching `post` is a tool still in flight. This is the whole
+ * reason the hook stream exists: readState() cannot see it, because Claude Code
+ * does not flush the assistant message until the turn ends, so a four-minute
+ * build is indistinguishable from a hang.
+ */
+export function liveTool(events: SessionEvent[]): { tool: string; info?: string; since: number } | null {
+  const done = new Set<string>();
+  for (const e of events) if (e.ev === "post" && e.id) done.add(e.id);
+
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    // A turn that has ended cannot have a tool in flight, whatever came before.
+    if (e.ev === "stop") return null;
+    if (e.ev === "pre" && e.tool && !(e.id && done.has(e.id))) {
+      return { tool: e.tool, info: e.info, since: e.at };
+    }
+  }
+  return null;
+}
