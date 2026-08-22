@@ -68,8 +68,25 @@ export type Push = {
   message: string;
   click?: string;
   tags: string[];
+  /** ntfy 1-5. See PRIORITY below — the default is not good enough here. */
+  priority: number;
   actions?: Action[];
 };
+
+/**
+ * Priority, and why the default is wrong.
+ *
+ * ntfy's default is 3, which Android is free to batch and defer — observed
+ * directly: a max-priority test arrived instantly while a default-priority
+ * permission prompt sent 90 seconds later never surfaced at all. A session
+ * blocked waiting on you is not a "default" event; it is the entire reason
+ * this program exists, and a deferred one stalls real work.
+ *
+ * 5 when there is something to answer, 4 otherwise. 4 still pops and sounds but
+ * respects Do Not Disturb; 5 is reserved for "a session is stopped until you
+ * act". Turn both down here if it ever gets noisy.
+ */
+const PRIORITY = { actionable: 5, informational: 4 } as const;
 
 const label = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "?";
 
@@ -98,18 +115,18 @@ export function buildPush(
 ): Push | null {
   if (!cfg.topic) return null;
 
+  const actionable_ = Boolean(o.options?.length) && actionable(cfg.dashUrl);
   const push: Push = {
     topic: cfg.topic,
     title: o.project,
     message: o.message,
     tags: ["bell"],
+    priority: actionable_ ? PRIORITY.actionable : PRIORITY.informational,
   };
   if (cfg.dashUrl) push.click = `${cfg.dashUrl}/s/${o.sessionId}`;
 
   // No buttons rather than buttons that point at the phone itself.
-  if (o.options?.length && actionable(cfg.dashUrl)) {
-    push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options);
-  }
+  if (actionable_) push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options!);
   return push;
 }
 
@@ -192,6 +209,10 @@ if (import.meta.main) {
   assert.equal(p.title, "repo");
   assert.equal(p.click, "https://x.ts.net/s/sid");
   assert.equal(p.actions?.length, 3);
+  // Default priority (3) gets batched and deferred by Android: a max-priority
+  // test arrived instantly while a default-priority permission prompt 90s later
+  // never surfaced. A blocked session must not be droppable.
+  assert.equal(p.priority, 5, "something to answer -> max priority");
 
   // Loopback: still notify, just without buttons that would hit the phone.
   const loop = buildPush({ topic: "t", dashUrl: "http://127.0.0.1:7777" }, {
@@ -199,6 +220,7 @@ if (import.meta.main) {
   })!;
   assert.equal(loop.actions, undefined);
   assert.ok(loop.click, "the link is still worth sending even when buttons are not");
+  assert.equal(loop.priority, 4, "no buttons -> high, not max");
 
   // Nothing to answer -> a plain push, not an empty actions array.
   assert.equal(buildPush(good, { sessionId: "s", project: "r", message: "m" })!.actions, undefined);
