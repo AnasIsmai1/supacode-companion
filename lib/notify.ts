@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pending } from "./prompts.ts";
 import { listSessions } from "./sessions.ts";
+import { isViewing } from "./presence.ts";
 
 const CONFIG = join(homedir(), ".claude", "companion", "config.env");
 
@@ -179,45 +180,6 @@ export function buildRunPush(
   };
   if (cfg.dashUrl) push.click = `${cfg.dashUrl}/w?wt=${encodeURIComponent(o.worktree)}`;
   return push;
-}
-
-/**
- * Is a phone looking at this session right now?
- *
- * Being pushed about a prompt you are already staring at is pure noise, and it
- * trains you to ignore the notifications that DO matter.
- *
- * No new client work is needed to know this. The chat view polls
- * /api/session/<id> every 3s and `usePoll` stops the moment `document.hidden`
- * is true — so a recent poll means that session is on a screen that is on.
- * Backgrounding the app, locking the phone, or switching to another session all
- * stop the polls within one interval.
- *
- * Deliberately keyed per SESSION, not per app: sitting on the tree while a
- * different session asks something should still push.
- */
-const viewing = new Map<string, number>();
-
-/** One poll interval is 3s; 20s is ~6 missed polls, so this errs toward pushing. */
-export const VIEWING_MS = 20_000;
-
-export function touchViewing(sessionId: string, now = Date.now()): void {
-  viewing.set(sessionId, now);
-  // Bounded: only sessions actually opened on a phone ever land here, and a
-  // stale entry is one number.
-  if (viewing.size > 200) {
-    for (const [k, at] of viewing) if (now - at > VIEWING_MS * 10) viewing.delete(k);
-  }
-}
-
-export function isViewing(sessionId: string, now = Date.now()): boolean {
-  const at = viewing.get(sessionId);
-  return at !== undefined && now - at < VIEWING_MS;
-}
-
-/** Test seam — the map is module state on purpose, so it needs a reset. */
-export function resetViewing(): void {
-  viewing.clear();
 }
 
 /** Options for whatever this session is currently waiting on, if anything. */
@@ -401,21 +363,5 @@ if (import.meta.main) {
   assert.equal(perm.actions?.length, 3);
   assert.deepEqual(perm.tags, ["bell"]);
 
-  // --- presence: do not push about a prompt that is already on screen ---
-  resetViewing();
-  const t0 = 1_000_000;
-  assert.equal(isViewing("a", t0), false, "never opened -> push");
-
-  touchViewing("a", t0);
-  assert.equal(isViewing("a", t0 + 1_000), true, "polled 1s ago -> on screen");
-  assert.equal(isViewing("a", t0 + VIEWING_MS - 1), true);
-  // usePoll stops on document.hidden, so polls stopping IS the phone locking.
-  assert.equal(isViewing("a", t0 + VIEWING_MS + 1), false, "polls stopped -> push again");
-
-  // Per session, not per app: the tree does not name a session, so sitting on
-  // it must not silence a different session's prompt.
-  assert.equal(isViewing("b", t0 + 1_000), false, "another session is still pushed");
-
-  resetViewing();
   console.log("ok");
 }

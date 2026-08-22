@@ -16,7 +16,8 @@ import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
 import { liveTool, readEvents } from "./lib/events.ts";
 import { agentsFor } from "./lib/agents.ts";
-import { isUrgent, notify, touchViewing } from "./lib/notify.ts";
+import { isUrgent, notify } from "./lib/notify.ts";
+import { recency, touchActed, touchViewed } from "./lib/presence.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
@@ -66,7 +67,7 @@ async function list() {
         dirty: w?.dirty ?? false,
       };
     })
-    .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
+    .sort((a, b) => rank(a) - rank(b) || recency(b.sessionId, b.updatedAt) - recency(a.sessionId, a.updatedAt));
 
   const taken = new Set(sessions.map((s) => s.cwd));
   const dormant = worktrees
@@ -167,6 +168,7 @@ const server = Bun.serve<WSData>({
 
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
+      touchActed(send[1]);
       // A message accepted mid-turn goes into Claude's OWN queue, not the
       // transcript, and can sit there for minutes. Reporting that as "sent" is
       // how the echo ends up claiming something that has not happened yet.
@@ -183,6 +185,7 @@ const server = Bun.serve<WSData>({
       if (!s?.zmx) return json({ error: "session not found" }, 404);
       const { key } = (await req.json().catch(() => ({}))) as { key?: string };
       if (!/^[1-9]$/.test(String(key))) return json({ error: "key must be 1-9" }, 400);
+      touchActed(ans[1]);
 
       const live = await pendingLiveQuestion(s.zmx);
       if (live && live.kind === "live-question") {
@@ -203,7 +206,7 @@ const server = Bun.serve<WSData>({
     // --- one payload for the chat header: state + prompt, no zmx spawn ---
     const sess = p.match(/^\/api\/session\/([0-9a-f-]{36})$/i);
     if (sess) {
-      touchViewing(sess[1]);
+      touchViewed(sess[1]);
       const s = await findSession(sess[1]);
       if (!s) return json({ error: "session not found" }, 404);
       const hit = s.pid != null ? windowByPid().get(s.pid) : undefined;
@@ -311,6 +314,7 @@ const server = Bun.serve<WSData>({
       if (!s?.zmx) return json({ error: "session not found" }, 404);
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
+      touchActed(chatAbout[1]);
 
       let cur = await pendingLiveQuestion(s.zmx);
       if (!cur || cur.kind !== "live-question") return json({ error: "no live question" }, 409);
