@@ -62,8 +62,8 @@ export function Share({ id, onOpen, onBack }: {
   if (error && !stash) return <Disconnected detail={error} />;
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <header className="shrink-0 flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <button
           onClick={onBack}
           aria-label="Back"
@@ -93,7 +93,7 @@ export function Share({ id, onOpen, onBack }: {
 
       {error && <p role="alert" className="bg-error/10 px-4 py-2 text-sm text-error">{error}</p>}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">
         {!tree ? (
           <p className="p-4 text-sm text-muted">Loading…</p>
         ) : !live.length ? (

@@ -96,7 +96,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
 /** Claude's output is markdown; v2 rendered it as literal text. */
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
-    <div className="text-[15px] leading-relaxed break-words">
+    <div className="text-[15px] leading-relaxed break-words [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

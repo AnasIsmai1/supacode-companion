@@ -139,7 +139,7 @@ export function Terminal({ sessionId, title, onChat, onBack }: {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-1 border-b border-line px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+      <header className="shrink-0 flex items-center gap-1 border-b border-line px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to sessions">
           <ChevronLeft className="size-5" aria-hidden />
         </Button>

@@ -426,8 +426,8 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <header className="shrink-0 flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to sessions">
           <ChevronLeft className="size-5" aria-hidden />
         </Button>
@@ -518,7 +518,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
         </ul>
       )}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">
         {turns.map((t, i) => <TurnView key={t.uuid || i} t={t} />)}
 
         {live.map((e) => (

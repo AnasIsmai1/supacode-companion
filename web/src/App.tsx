@@ -60,7 +60,10 @@ export default function App() {
   }, []);
 
   return (
-    <div className="h-full w-full overflow-x-hidden overflow-y-auto">
+    // Every view is a flex column that owns its own scrolling main, so the root
+    // must NOT scroll too. It did, which nested each view inside a second
+    // scroller and let the headers drift off the top on a phone.
+    <div className="h-full w-full overflow-hidden">
       <Suspense fallback={<Loading />}>
         {route.view === "chat" && (
           <Chat
@@ -82,6 +85,7 @@ export default function App() {
       </Suspense>
 
       {route.view === "tree" && (
+        <div className="h-full overflow-y-auto overflow-x-hidden">
         <Tree
           onOpen={(w) =>
             w.sessionId
@@ -93,6 +97,7 @@ export default function App() {
           onWork={(wt) => go(`/w?wt=${encodeURIComponent(wt.id)}`)}
           onNewWindow={setNewWindowFor}
         />
+        </div>
       )}
 
       <NewWindowSheet wt={newWindowFor} onClose={() => setNewWindowFor(null)} />

@@ -14,8 +14,8 @@ export function Todo({ onBack }: { onBack: () => void }) {
   const { data, error } = usePoll<{ markdown: string }>("/api/todo", 30_000);
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <header className="shrink-0 flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <button
           onClick={onBack}
           aria-label="Back"
@@ -28,7 +28,7 @@ export function Todo({ onBack }: { onBack: () => void }) {
         <RefreshCw className="size-3.5 text-faint" aria-label="Refreshes every 30 seconds" />
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 py-3">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
         {error && !data && <p className="text-sm text-error">{error}</p>}
         {!data && !error && <p className="text-sm text-muted">Loading…</p>}
         {data && <Markdown>{data.markdown}</Markdown>}
