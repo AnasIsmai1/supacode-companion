@@ -107,6 +107,47 @@ async function focusOption(zmxName: string, key: string): Promise<boolean> {
 }
 
 
+/**
+ * Answer a modal dialog in prose.
+ *
+ * The dialog is modal, so text typed while it is open goes nowhere and the
+ * Enter that follows picks an option. Its own "Chat about this" row is the way
+ * in. Arrow keys and verify, never a blind key count.
+ *
+ * Shared by /api/chat-about and by /api/send, which routes here rather than
+ * refusing when it finds a dialog in the way.
+ */
+async function chatAbout(zmxName: string, text: string): Promise<{ ok: boolean; reason?: string }> {
+  let cur = await pendingLiveQuestion(zmxName);
+  if (!cur || cur.kind !== "live-question") return { ok: false, reason: "no live question" };
+  if (!cur.canChat) return { ok: false, reason: "this dialog has no chat option" };
+
+  // When "Chat about this" is itself a numbered option, one keystroke picks it.
+  if (cur.chatKey) {
+    await sendChoice(zmxName, cur.chatKey);
+    await Bun.sleep(400);
+    const r = await sendText(zmxName, text);
+    return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+  }
+
+  // Otherwise walk down until the chat row has focus, bounded by option count.
+  for (let i = 0; i <= cur.options.length + 1 && !cur.chatFocused; i++) {
+    await sendChoice(zmxName, ARROW.down);
+    await Bun.sleep(140);
+    const next = await pendingLiveQuestion(zmxName);
+    if (!next || next.kind !== "live-question") break;
+    cur = next;
+  }
+  if (!cur || cur.kind !== "live-question" || !cur.chatFocused) {
+    return { ok: false, reason: "could not reach the chat option" };
+  }
+
+  await sendChoice(zmxName, "\r");   // open the chat input
+  await Bun.sleep(350);
+  const r = await sendText(zmxName, text);
+  return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+}
+
 type WSData = { sessionId: string; raw: boolean; watcher?: FSWatcher; tail?: Bun.Subprocess };
 
 /** Every window has a surface; only some have a Claude session. zmx names the
@@ -177,9 +218,20 @@ const server = Bun.serve<WSData>({
       // transcript, and can sit there for minutes. Reporting that as "sent" is
       // how the echo ends up claiming something that has not happened yet.
       const queued = s.status === "busy";
-      return (await sendText(s.zmx, String(text)))
-        ? json({ ok: true, queued })
-        : json({ error: "zmx send failed" }, 502);
+
+      // A session parked on a question cannot take a plain message: the text
+      // goes nowhere and the Enter picks an option. The dialog's own "Chat
+      // about this" row is the way in, so use it rather than refusing.
+      const live = await pendingLiveQuestion(s.zmx);
+      if (live && live.kind === "live-question" && live.canChat) {
+        const via = await chatAbout(s.zmx, String(text));
+        return via.ok
+          ? json({ ok: true, queued, viaDialog: true })
+          : json({ error: via.reason ?? "a dialog is open in this session" }, 409);
+      }
+
+      const r = await sendText(s.zmx, String(text));
+      return r.ok ? json({ ok: true, queued }) : json({ error: r.reason }, 502);
     }
 
     // --- answer a question or permission prompt: one keystroke, no vim prefix ---
@@ -316,44 +368,16 @@ const server = Bun.serve<WSData>({
     // --- answer a question in prose. The dialog is modal, so plain text typed
     // --- while it is open goes nowhere: you must first move to its "Chat about
     // --- this" row and select it. Arrow + verify, never a blind key count.
-    const chatAbout = p.match(/^\/api\/chat-about\/([0-9a-f-]{36})$/i);
-    if (chatAbout && req.method === "POST") {
-      const s = await findSession(chatAbout[1]);
+    const chatRoute = p.match(/^\/api\/chat-about\/([0-9a-f-]{36})$/i);
+    if (chatRoute && req.method === "POST") {
+      const s = await findSession(chatRoute[1]);
       if (!s?.zmx) return json({ error: "session not found" }, 404);
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
-      touchActed(chatAbout[1]);
+      touchActed(chatRoute[1]);
 
-      let cur = await pendingLiveQuestion(s.zmx);
-      if (!cur || cur.kind !== "live-question") return json({ error: "no live question" }, 409);
-      if (!cur.canChat) return json({ error: "this dialog has no chat option" }, 409);
-
-      // When "Chat about this" is itself a numbered option, one keystroke picks it.
-      if (cur.chatKey) {
-        await sendChoice(s.zmx, cur.chatKey);
-        await Bun.sleep(400);
-        return (await sendText(s.zmx, String(text)))
-          ? json({ ok: true })
-          : json({ error: "could not submit the reply" }, 502);
-      }
-
-      // Otherwise walk down until the chat row has focus, bounded by option count.
-      for (let i = 0; i <= cur.options.length + 1 && !cur.chatFocused; i++) {
-        await sendChoice(s.zmx, ARROW.down);
-        await Bun.sleep(140);
-        const next = await pendingLiveQuestion(s.zmx);
-        if (!next || next.kind !== "live-question") break;
-        cur = next;
-      }
-      if (!cur || cur.kind !== "live-question" || !cur.chatFocused) {
-        return json({ error: "could not reach the chat option" }, 502);
-      }
-
-      await sendChoice(s.zmx, "\r");   // open the chat input
-      await Bun.sleep(350);
-      return (await sendText(s.zmx, String(text)))
-        ? json({ ok: true })
-        : json({ error: "could not submit the reply" }, 502);
+      const r = await chatAbout(s.zmx, String(text));
+      return r.ok ? json({ ok: true }) : json({ error: r.reason }, 409);
     }
 
     // --- what a session changed, against the fork point of its branch ---

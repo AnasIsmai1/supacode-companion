@@ -17,6 +17,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { zmx } from "./zmx.ts";
+import { parseLiveQuestion, parsePermission } from "./prompts.ts";
 
 const SETTINGS = join(homedir(), ".claude", "settings.json");
 const ESC = "\x1b";
@@ -122,15 +123,39 @@ function holds(box: Box, probe: string): boolean {
 }
 
 /**
+ * Why a send did not land.
+ *
+ * "zmx send failed" was the only thing the UI could say, for six different
+ * causes with six different fixes. A modal dialog being open is not a failure
+ * of zmx and telling you it was sends you looking in the wrong place.
+ */
+export type SendResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Is a modal dialog on screen?
+ *
+ * Deliberately the real parsers rather than a keyword match. A regex over the
+ * last lines looked fine until the self-check pointed a sentence at it: Claude
+ * writes "Would you like…" in ordinary prose all the time, and blocking every
+ * send that follows one would be worse than the failure being fixed.
+ *
+ * parseLiveQuestion and parsePermission already demand the things prose cannot
+ * fake — the cursor parked on a numbered option, and Claude's own box chrome
+ * immediately above it. They take a screen string, so this costs no extra read.
+ */
+function modalOpen(screen: string): boolean {
+  return Boolean(parseLiveQuestion(screen) ?? parsePermission(screen));
+}
+
+/**
  * Type a message and submit it, then prove it actually went.
  *
  * v1 wrote the text and the Enter in a single zmx send, then checked whether the
  * text was still in the box. That cannot tell "sent" from "never typed": both
- * leave an empty box, so a dropped write was reported as success — the one
- * failure mode that matters most here. So confirm the text ARRIVES, then confirm
- * it LEAVES. Two signals, and they disambiguate.
+ * leave an empty box, so a dropped write was reported as success. So confirm the
+ * text ARRIVES, then confirm it LEAVES. Two signals, and they disambiguate.
  */
-async function deliver(session: string, text: string): Promise<boolean> {
+async function deliver(session: string, text: string): Promise<SendResult> {
   const probe = probeOf(text);
 
   // A rating overlay eats Enter and is invisible to every other parser here.
@@ -140,28 +165,45 @@ async function deliver(session: string, text: string): Promise<boolean> {
     await Bun.sleep(250);
   }
 
-  if (!(await write(session, payload(text, false)))) return false;
+  // Typing into a session parked on a question goes nowhere, and the Enter that
+  // follows selects whatever is highlighted. Refuse rather than press keys into
+  // a dialog and report a zmx problem that does not exist.
+  if (modalOpen(first.screen)) {
+    return { ok: false, reason: "a dialog is open in this session; answer it first" };
+  }
+
+  if (!(await write(session, payload(text, false)))) {
+    return { ok: false, reason: "zmx would not accept the keystrokes" };
+  }
   await Bun.sleep(300);
 
   let box = await readBox(session);
   if (box.text !== null && !holds(box, probe)) {
     // Nothing of ours arrived. Retype only into an empty box — if there is other
     // text in there it is the user's, and appending to it would corrupt it.
-    if (box.text.trim()) return false;
-    if (!(await write(session, payload(text, false)))) return false;
+    if (box.text.trim()) {
+      return { ok: false, reason: "something else is already typed in the input box" };
+    }
+    if (!(await write(session, payload(text, false)))) {
+      return { ok: false, reason: "zmx would not accept the keystrokes" };
+    }
     await Bun.sleep(300);
     box = await readBox(session);
-    if (box.text !== null && !holds(box, probe)) return false;
+    if (box.text !== null && !holds(box, probe)) {
+      return { ok: false, reason: "the text never reached the input box" };
+    }
   }
 
   // CSI-u first: Claude Code turns on the Kitty protocol, so it is the form that
   // is actually honoured. Legacy CR is the fallback, not the other way round.
   for (const key of [ENTER_CSI_U, ENTER, ENTER]) {
-    if (!(await write(session, key))) return false;
+    if (!(await write(session, key))) {
+      return { ok: false, reason: "zmx would not accept the keystrokes" };
+    }
     await Bun.sleep(350);
-    if (!holds(await readBox(session), probe)) return true;
+    if (!holds(await readBox(session), probe)) return { ok: true };
   }
-  return false;
+  return { ok: false, reason: "typed, but Enter never submitted it" };
 }
 
 /**
@@ -174,17 +216,31 @@ async function deliver(session: string, text: string): Promise<boolean> {
  */
 const chains = new Map<string, Promise<unknown>>();
 
-export function sendText(session: string, text: string): Promise<boolean> {
+/** Run something on this session's queue, so nothing interleaves with a send. */
+function queue<T>(session: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(session) ?? Promise.resolve();
-  const next = prev.then(() => deliver(session, text), () => deliver(session, text));
-  chains.set(session, next.catch(() => {}));
+  const next = prev.then(fn, fn);
   // Unbounded growth is not possible: one entry per zmx session, replaced each time.
+  chains.set(session, next.catch(() => {}));
   return next;
 }
 
-/** Answer a numbered prompt. Prompts are modal — they read the key directly, so
- *  no vim prefix, and ESC would dismiss the prompt rather than select anything. */
-export const sendChoice = (zmx: string, key: string) => write(zmx, key);
+export function sendText(session: string, text: string): Promise<SendResult> {
+  return queue(session, () => deliver(session, text));
+}
+
+/**
+ * Answer a numbered prompt, or move a selection.
+ *
+ * Prompts are modal — they read the key directly, so no vim prefix, and ESC
+ * would dismiss the prompt rather than select anything.
+ *
+ * On the same queue as sendText. It was not, which left arrow keys and digits
+ * free to interleave with a message being typed: the option walk that reads
+ * every description presses arrows, and a send landing halfway through it would
+ * scatter its characters through a dialog.
+ */
+export const sendChoice = (zmx: string, key: string) => queue(zmx, () => write(zmx, key));
 
 if (import.meta.main) {
   const assert: typeof import("node:assert").strict = (await import("node:assert")).strict;
@@ -215,6 +271,31 @@ if (import.meta.main) {
   assert.equal(feedbackPromptOpen(screen("", "  ❯ 1. Yes\n    2. No")), false);
   // It survives ANSI colouring, which is how it actually arrives.
   assert.equal(feedbackPromptOpen(`\x1b[1m  1: Bad\x1b[0m   2: Fine   3: Good   0: Dismiss`), true);
+
+  // --- the modal guard: this is what "zmx send failed" usually meant ---
+  // Typing into a session parked on a question goes nowhere and the Enter picks
+  // an option, so it must be refused before any key is pressed.
+  const permission = [
+    "⏺ I'll update the config.",
+    "╭────────────────────────────────╮",
+    "│ Do you want to make this edit? │",
+    "│ ❯ 1. Yes                       │",
+    "│   2. No                        │",
+    "╰────────────────────────────────╯",
+  ].join("\n");
+  assert.equal(modalOpen(permission), true, "a permission box blocks a send");
+  assert.equal(modalOpen(screen("❯ half typed")), false, "an ordinary composer does not");
+
+  // The whole reason this is the parsers and not a keyword match: Claude writes
+  // these words in prose constantly, and blocking every send after one would be
+  // worse than the failure this guards against.
+  assert.equal(modalOpen("Would you like me to continue?"), false, "prose is not a dialog");
+  assert.equal(modalOpen(screen("", "  Do you want tea? I can put the kettle on.")), false);
+  assert.equal(
+    modalOpen(screen("", "  1. first thing\n  2. second thing\n  3. third thing")),
+    false,
+    "a numbered list with no cursor and no chrome is not a dialog",
+  );
 
   // --- probe normalisation: the box wraps and re-spaces what you typed ---
   assert.equal(probeOf("  hello   world  "), "hello world");
