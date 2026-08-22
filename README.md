@@ -117,7 +117,20 @@ NTFY_TOPIC=<random>
 DASH_URL=https://<your-machine>.ts.net
 ```
 
-Install the ntfy Android app and subscribe to that topic.
+Install the ntfy Android app and **subscribe to that topic** — installing alone
+subscribes you to nothing, and the browser view at `ntfy.sh/<topic>` reads
+without a subscription, which makes an unsubscribed app look like a publishing
+problem when it is not.
+
+A prompt arrives with its real options as buttons. ntfy's `http` action is
+performed by the ntfy app **on the phone, from the phone's network** — the phone
+is on the tailnet, so the button POSTs straight to `/api/answer` with nothing
+exposed publicly and no auth added. Tap one and the session is answered.
+
+Sent at ntfy priority 5 when there is something to answer, 4 otherwise. The
+default (3) is not enough: Android batched and deferred it, and a real
+permission prompt never surfaced at all while a max-priority test 90 seconds
+earlier arrived instantly.
 
 ## Terminal fallback
 
