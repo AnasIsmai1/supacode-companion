@@ -6,6 +6,7 @@ import { ago, cn } from "@/lib/utils";
 import { Actions } from "@/views/work/Actions";
 import { Runs } from "@/views/work/Runs";
 import { CommitRows, FileRows, PatchLines } from "@/components/Skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Everything a worktree has to say, independent of any Claude session.
@@ -235,15 +236,21 @@ export function Work({ wt, onBack }: { wt: string; onBack: () => void }) {
           <h1 className="truncate text-sm font-semibold">{name}</h1>
           <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
             <GitBranch className="size-3 shrink-0" aria-hidden />
-            <span className="truncate font-mono">{diff?.branch ?? "…"}</span>
+            {diff
+              ? <span className="truncate font-mono">{diff.branch}</span>
+              : <Skeleton className="h-2.5 w-28" />}
           </span>
         </span>
-        {stat && stat.files > 0 && (
+        {/* Reserve the counts' slot while they load, or the title reflows the
+            moment they arrive. */}
+        {!stat ? (
+          <Skeleton className="h-3 w-16 shrink-0" />
+        ) : stat.files > 0 ? (
           <span className="shrink-0 font-mono text-[11px] tabular-nums">
             <span className="text-success">+{stat.additions}</span>{" "}
             <span className="text-error">−{stat.deletions}</span>
           </span>
-        )}
+        ) : null}
       </header>
 
       <nav className="flex border-b border-line" role="tablist">
@@ -263,6 +270,7 @@ export function Work({ wt, onBack }: { wt: string; onBack: () => void }) {
             {t.id === "changes" && stat && stat.files > 0 && (
               <span className="ml-1.5 tabular-nums text-faint">{stat.files}</span>
             )}
+            {t.id === "changes" && !stat && <Skeleton className="ml-1.5 inline-block h-2.5 w-4 align-middle" />}
           </button>
         ))}
       </nav>

@@ -6,6 +6,7 @@ import { usePoll, type Project, type Win, type Worktree } from "@/lib/api";
 import { Disconnected } from "@/components/Disconnected";
 import { ago, cn } from "@/lib/utils";
 import { SessionRows } from "@/components/Skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 
 function WindowRow({ w, onOpen }: { w: Win; onOpen: (w: Win) => void }) {
   const attention = Boolean(w.ask);
@@ -164,13 +165,14 @@ export function Tree({
 
   // Never loaded and erroring means the server is unreachable, not slow.
   if (error && !data) return <Disconnected detail={error} />;
-  if (!data) return <SessionRows n={7} />;
 
   return (
     <>
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <h1 className="flex-1 text-lg font-semibold">Supacode</h1>
-        <span className="text-xs tabular-nums text-muted">{data.live} live</span>
+        {data
+          ? <span className="text-xs tabular-nums text-muted">{data.live} live</span>
+          : <Skeleton className="h-3 w-12" />}
         <Button variant="ghost" size="icon" aria-label="Backlog" onClick={onTodo}>
           <ListTodo className="size-5" aria-hidden />
         </Button>
@@ -203,15 +205,23 @@ export function Tree({
       </div>
 
       {/* The point of this screen: what needs me, and what is running. */}
+      {!data && (
+        <>
+          <h2 className="border-b border-line bg-surface/40 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider text-faint">
+            <Skeleton className="h-2.5 w-20" />
+          </h2>
+          <SessionRows n={7} />
+        </>
+      )}
       <Section title="Needs you" rows={needsYou} onOpen={onOpen} />
       <Section title="Working" rows={working} onOpen={onOpen} />
       <Section title="Recent" rows={recent} onOpen={onOpen} />
 
-      {query && hits.length === 0 && (
+      {data && query && hits.length === 0 && (
         <p className="px-4 py-8 text-center text-sm text-muted">No sessions match “{q}”.</p>
       )}
 
-      {!query && (
+      {data && !query && (
         <>
           <h2 className="border-b border-line bg-surface/40 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider text-faint">
             All projects <span className="tabular-nums">{data.projects.length}</span>

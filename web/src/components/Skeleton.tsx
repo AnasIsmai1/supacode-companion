@@ -1,74 +1,72 @@
-import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Placeholders shaped like the thing that is coming.
+ * Loading states, shaped like what is coming.
  *
- * Every loading state here used to be the word "Loading…" in the top left,
- * which tells you nothing is broken and nothing else. Worse, it occupies a
- * different amount of space than the content it precedes, so the screen jumps
- * the moment data lands.
+ * Built on the shadcn/ui Skeleton primitive rather than a bespoke one, so it
+ * matches the rest of components/ui and stays upgradeable.
  *
- * So each skeleton mirrors the real row's metrics: same padding, same min
- * height, same columns. Nothing moves when the data replaces it.
+ * Two rules drive everything here: match the content's layout, and match its
+ * dimensions. The old "Loading…" occupied a different amount of space than
+ * whatever replaced it, so every load ended in a layout shift. Each set below
+ * mirrors the real row's padding, min-height and columns, and nothing moves
+ * when the data lands.
  *
- * The sweep is a translated gradient rather than an animated width, so it stays
- * on the compositor. index.css already kills animation globally under
- * prefers-reduced-motion, which leaves a static grey block: still correctly
- * shaped, just not moving.
+ * `animate-pulse` comes from the primitive, and index.css already damps all
+ * animation under prefers-reduced-motion, so a motion-sensitive user gets a
+ * static block. The shape is the part carrying the meaning.
  */
 
-/** One grey block. Widths vary so a list does not look like a barcode. */
-export function Bar({ w = "w-24", className, style }: { w?: string; className?: string; style?: React.CSSProperties }) {
-  return <span className={cn("skeleton block h-3 rounded", w, className)} style={style} aria-hidden />;
-}
-
-/**
- * Staggered so the list reads as filling downward rather than blinking at once.
- *
- * A custom property, not animationDelay: the sweep runs on ::after, which an
- * inline style cannot reach. This cascades to every .skeleton inside the row.
- */
-const delay = (i: number) => ({ "--skeleton-delay": `${i * 90}ms` }) as React.CSSProperties;
-
+/** One live region per list. A screen reader should hear this once, not per box. */
 function Frame({ label, children }: { label: string; children: React.ReactNode }) {
-  // One live region for the whole list: a screen reader should hear "loading",
-  // not eleven anonymous boxes.
   return (
-    <div role="status" aria-busy="true" aria-label={label} className="animate-[fade-in_200ms_ease-out]">
+    <div role="status" aria-busy="true">
       <span className="sr-only">{label}</span>
       {children}
     </div>
   );
 }
 
-/** Matches FlatRow in Tree: icon, two lines, right-aligned age. */
+/**
+ * Widths vary per row on purpose.
+ *
+ * A column of identical bars reads as a barcode rather than as text that has
+ * not arrived. Indexed rather than random, so the layout is stable across
+ * re-renders.
+ */
+const TITLE = ["w-40", "w-52", "w-32", "w-56", "w-44"];
+const PATH = ["w-48", "w-64", "w-36", "w-56"];
+const LINE = ["w-full", "w-11/12", "w-4/5", "w-full", "w-3/4", "w-full", "w-2/3"];
+const HUNK = ["w-2/3", "w-full", "w-5/6", "w-1/2", "w-full", "w-3/4"];
+
+/** Matches FlatRow in Tree: icon, title, subtitle, right-aligned age. */
 export function SessionRows({ n = 6 }: { n?: number }) {
   return (
     <Frame label="Loading sessions">
       {Array.from({ length: n }, (_, i) => (
-        <div key={i} className="flex min-h-11 items-center gap-3 border-b border-line px-4 py-2.5" style={delay(i)}>
-          <span className="skeleton size-4 shrink-0 rounded-full" aria-hidden />
+        <div key={i} className="flex min-h-11 items-center gap-3 border-b border-line px-4 py-2.5">
+          <Skeleton className="size-4 shrink-0 rounded-full" />
           <span className="min-w-0 flex-1 space-y-1.5">
-            <Bar w={i % 3 === 0 ? "w-40" : i % 3 === 1 ? "w-52" : "w-32"} />
-            <Bar w="w-24" className="h-2" />
+            <Skeleton className={`h-3 ${TITLE[i % TITLE.length]}`} />
+            <Skeleton className="h-2 w-24" />
           </span>
-          <Bar w="w-8" className="h-2 shrink-0" />
+          <Skeleton className="h-2 w-8 shrink-0" />
         </div>
       ))}
     </Frame>
   );
 }
 
-/** Matches FileRow in Work: chevron, glyph, path, +/- counts. */
+/** Matches FileRow in Work: chevron, status glyph, path, +/- counts. */
 export function FileRows({ n = 7 }: { n?: number }) {
   return (
     <Frame label="Loading changed files">
       {Array.from({ length: n }, (_, i) => (
-        <div key={i} className="flex min-h-11 items-center gap-2 border-b border-line px-4 py-2.5" style={delay(i)}>
-          <span className="skeleton size-3 shrink-0 rounded" aria-hidden />
-          <span className="skeleton size-3.5 shrink-0 rounded" aria-hidden />
-          <Bar w={["w-48", "w-64", "w-36", "w-56"][i % 4]} className="flex-1" />
-          <Bar w="w-10" className="h-2 shrink-0" />
+        <div key={i} className="flex min-h-11 items-center gap-2 border-b border-line px-4 py-2.5">
+          <Skeleton className="size-3 shrink-0" />
+          <Skeleton className="size-3.5 shrink-0" />
+          <Skeleton className={`h-3 ${PATH[i % PATH.length]}`} />
+          <Skeleton className="ml-auto h-2 w-10 shrink-0" />
         </div>
       ))}
     </Frame>
@@ -80,58 +78,58 @@ export function CommitRows({ n = 8 }: { n?: number }) {
   return (
     <Frame label="Loading history">
       {Array.from({ length: n }, (_, i) => (
-        <div key={i} className="flex items-baseline gap-2 border-b border-line px-4 py-2" style={delay(i)}>
-          <span className="skeleton mt-1 size-1.5 shrink-0 rounded-full" aria-hidden />
+        <div key={i} className="flex items-baseline gap-2 border-b border-line px-4 py-2">
+          <Skeleton className="mt-1 size-1.5 shrink-0 rounded-full" />
           <span className="min-w-0 flex-1 space-y-1.5">
-            <Bar w={["w-56", "w-44", "w-64", "w-40"][i % 4]} />
-            <Bar w="w-28" className="h-2" />
+            <Skeleton className={`h-3 ${TITLE[i % TITLE.length]}`} />
+            <Skeleton className="h-2 w-28" />
           </span>
-          <Bar w="w-8" className="h-2 shrink-0" />
+          <Skeleton className="h-2 w-8 shrink-0" />
         </div>
       ))}
     </Frame>
   );
 }
 
-/** Prose: ragged line lengths, with the odd gap where a heading sits. */
+/** Prose: ragged lines, with a wider gap and shorter bar where a heading sits. */
 export function TextLines({ n = 10 }: { n?: number }) {
-  const widths = ["w-full", "w-11/12", "w-4/5", "w-full", "w-3/4", "w-full", "w-2/3"];
   return (
     <Frame label="Loading">
       <div className="space-y-2.5 py-1">
-        {Array.from({ length: n }, (_, i) => (
-          <div key={i} style={delay(i)} className={i % 5 === 0 ? "pt-3" : undefined}>
-            <Bar w={i % 5 === 0 ? "w-1/3" : widths[i % widths.length]} className={i % 5 === 0 ? "h-4" : undefined} />
-          </div>
-        ))}
+        {Array.from({ length: n }, (_, i) =>
+          i % 5 === 0 ? (
+            <Skeleton key={i} className="mt-3 h-4 w-1/3" />
+          ) : (
+            <Skeleton key={i} className={`h-3 ${LINE[i % LINE.length]}`} />
+          ),
+        )}
       </div>
     </Frame>
   );
 }
 
-/** A patch: monospace-ish block, some lines short like real diff hunks. */
+/** A patch body: short and long lines, the way real hunks fall. */
 export function PatchLines({ n = 8 }: { n?: number }) {
-  const widths = ["w-2/3", "w-full", "w-5/6", "w-1/2", "w-full", "w-3/4"];
   return (
     <Frame label="Loading diff">
       <div className="space-y-2 px-4 py-3">
         {Array.from({ length: n }, (_, i) => (
-          <Bar key={i} w={widths[i % widths.length]} className="h-2.5" style={delay(i)} />
+          <Skeleton key={i} className={`h-2.5 ${HUNK[i % HUNK.length]}`} />
         ))}
       </div>
     </Frame>
   );
 }
 
-/** The route-level fallback, before a view knows what shape it is. */
+/** Route-level fallback, before a lazy view knows what shape it is. */
 export function ViewSkeleton() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
-        <span className="skeleton size-5 shrink-0 rounded" aria-hidden />
+        <Skeleton className="size-5 shrink-0" />
         <span className="min-w-0 flex-1 space-y-1.5">
-          <Bar w="w-32" />
-          <Bar w="w-20" className="h-2" />
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-2 w-20" />
         </span>
       </div>
       <SessionRows n={7} />

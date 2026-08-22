@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Folder, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { get, post } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Entry = { name: string; path: string; git: boolean; registered: boolean };
 type Dir = { path: string; parent: string | null; display: string; entries: Entry[] };
@@ -46,7 +47,9 @@ export function Browse({ onDone }: { onDone: () => void }) {
         >
           <ChevronLeft className="size-5" aria-hidden />
         </Button>
-        <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{dir?.display ?? "…"}</h1>
+        {dir
+          ? <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{dir.display}</h1>
+          : <Skeleton className="h-3 w-40" />}
       </header>
 
       <main className="flex-1 overflow-y-auto">

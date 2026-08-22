@@ -40,51 +40,10 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/*
- * Skeleton placeholders.
- *
- * A sweep translated across the block, not an animated width or background
- * position, so it stays on the compositor and never triggers layout. The
- * reduced-motion block below stops it and leaves a correctly shaped grey box.
- */
-.skeleton {
-  position: relative;
-  overflow: hidden;
-  background: var(--color-raised);
-}
-.skeleton::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--color-line) 85%, white) 50%,
-    transparent 100%
-  );
-  /* Inherited from the row, so a list fills downward instead of blinking
-     at once. The sweep runs on ::after, which cannot take an inline style,
-     so the delay arrives as a custom property. */
-  animation: skeleton-sweep 1.4s ease-in-out infinite;
-  animation-delay: var(--skeleton-delay, 0ms);
-}
-@keyframes skeleton-sweep {
-  100% { transform: translateX(100%); }
-}
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 /* Respect the user's motion preference rather than animating regardless. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-  /* A sweep frozen mid-block reads as a rendering artefact. Remove it and keep
-     the plain shape, which still says "something is coming, here". */
-  .skeleton::after { display: none; }
 }
