@@ -263,6 +263,67 @@ export async function install(repo = REPO): Promise<{ ok: boolean; steps: string
   return { ok: boot.ok, steps };
 }
 
+export type Bench = { name: string; ms: number; note: string };
+
+/**
+ * Time the hot paths.
+ *
+ * The perf comments in this repo were wrong by roughly fifty times when they
+ * were checked: the code claimed 500ms per zmx spawn and a 4s worktree scan
+ * against measured figures under 10ms and 15ms. Caches and TTLs had been tuned
+ * against numbers that no longer held. A comment cannot go stale if a command
+ * reprints it.
+ *
+ * Best of three, because the first run of anything pays for a cold cache and
+ * the median hides a slow outlier that a phone would feel.
+ */
+export async function bench(): Promise<Bench[]> {
+  const { listSessions } = await import("./sessions.ts");
+  const { listWorktrees } = await import("./worktrees.ts");
+  const { readChat } = await import("./transcript.ts");
+  const { readState } = await import("./state.ts");
+  const { tree } = await import("./tree.ts");
+  const { zmx } = await import("./zmx.ts");
+  const { diffStat, diffSummary } = await import("./diff.ts");
+  const { status } = await import("./git.ts");
+
+  const best = async (name: string, note: string, fn: () => Promise<unknown>): Promise<Bench> => {
+    let ms = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      try { await fn(); } catch { /* a slow failure is still a measurement */ }
+      ms = Math.min(ms, performance.now() - t);
+    }
+    return { name, ms: Math.round(ms), note };
+  };
+
+  const out: Bench[] = [];
+  // Warm the caches first, so what follows measures steady state rather than
+  // one cold scan that nothing in production ever pays twice.
+  const sessions = await listSessions(true);
+  const worktrees = await listWorktrees(true);
+
+  out.push(await best("listSessions (cached)", `${sessions.length} sessions`, () => listSessions()));
+  out.push(await best("listSessions (forced)", "full rescan, ps + zmx ls", () => listSessions(true)));
+  out.push(await best("listWorktrees (forced)", `${worktrees.length} worktrees, git per worktree`, () => listWorktrees(true)));
+  out.push(await best("tree()", "what the home screen polls every 3s", () => tree()));
+
+  const s = sessions.find((x) => x.zmx);
+  if (s) {
+    out.push(await best("readChat(200)", "transcript tail", () => readChat(s.sessionId, 200)));
+    out.push(await best("readState", "permission mode, usage, queue", () => readState(s.sessionId)));
+    out.push(await best("zmx history --vt", "one screen scrape", () => zmx(["history", s.zmx!, "--vt"])));
+  }
+
+  const wt = worktrees.find((w) => w.dirty) ?? worktrees[0];
+  if (wt) {
+    out.push(await best("diffStat", `${wt.path.split("/").pop()}`, () => diffStat(wt.path)));
+    out.push(await best("diffSummary", "file list, no patch bodies", () => diffSummary(wt.path)));
+    out.push(await best("git status", "porcelain=v2", () => status(wt.path)));
+  }
+  return out;
+}
+
 export async function restart(): Promise<boolean> {
   const uid = process.getuid?.() ?? 501;
   return (await sh(["launchctl", "kickstart", "-k", `gui/${uid}/${LABEL}`])).ok;

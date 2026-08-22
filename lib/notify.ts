@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pending } from "./prompts.ts";
 import { listSessions } from "./sessions.ts";
+import { isViewing } from "./presence.ts";
 
 const CONFIG = join(homedir(), ".claude", "companion", "config.env");
 
@@ -86,7 +87,22 @@ export type Push = {
  * respects Do Not Disturb; 5 is reserved for "a session is stopped until you
  * act". Turn both down here if it ever gets noisy.
  */
-const PRIORITY = { actionable: 5, informational: 4 } as const;
+const PRIORITY = { actionable: 5, informational: 4, idle: 2 } as const;
+
+/**
+ * Claude Code sends two very different things down one hook.
+ *
+ *   permission_prompt  a session is STOPPED until you answer
+ *   idle_prompt        you have not typed in a while
+ *
+ * Treating them alike is why 23 of 27 spool entries were idle_prompt and the
+ * tree showed 17 of 21 sessions as needing attention. It also trains you to
+ * ignore the notification that actually matters.
+ *
+ * idle_prompt still arrives — a finished turn is worth knowing about — but
+ * silently, at a priority Android will not sound or vibrate for.
+ */
+export const isUrgent = (type: string | null | undefined): boolean => type !== "idle_prompt";
 
 const label = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "?";
 
@@ -111,36 +127,102 @@ export function buildActions(
 
 export function buildPush(
   cfg: Config,
-  o: { sessionId: string; project: string; message: string; options?: { key: string; label: string }[] },
+  o: {
+    sessionId: string;
+    project: string;
+    message: string;
+    options?: { key: string; label: string }[];
+    /** Claude Code's notification_type. See isUrgent. */
+    type?: string | null;
+  },
 ): Push | null {
   if (!cfg.topic) return null;
 
+  const urgent = isUrgent(o.type);
   const actionable_ = Boolean(o.options?.length) && actionable(cfg.dashUrl);
+  // Spell the options out even when the buttons are unavailable: reading them
+  // on the lock screen still beats opening the app to find out what was asked.
+  const body = o.options?.length && urgent
+    ? `${o.message}\n\n${optionLines(o.options)}`
+    : o.message;
   const push: Push = {
     topic: cfg.topic,
     title: o.project,
-    message: o.message,
-    tags: ["bell"],
-    priority: actionable_ ? PRIORITY.actionable : PRIORITY.informational,
+    message: body.slice(0, 3500),
+    tags: [urgent ? "bell" : "speech_balloon"],
+    priority: !urgent ? PRIORITY.idle : actionable_ ? PRIORITY.actionable : PRIORITY.informational,
   };
   if (cfg.dashUrl) push.click = `${cfg.dashUrl}/s/${o.sessionId}`;
 
-  // No buttons rather than buttons that point at the phone itself.
-  if (actionable_) push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options!);
+  // No buttons rather than buttons that point at the phone itself. An idle
+  // nudge has nothing to answer even when a stale dialog is still on screen.
+  if (actionable_ && urgent) push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options!);
   return push;
 }
 
+/**
+ * A finished run.
+ *
+ * The whole point of runs surviving the phone locking is that you walk away.
+ * A four-minute build that finishes while you are gone should say so, with its
+ * real exit code — not wait for you to remember to look.
+ *
+ * Informational priority: nothing is blocked on you, so this must not be as
+ * loud as a session that has actually stopped waiting.
+ */
+export function buildRunPush(
+  cfg: Config,
+  o: { worktree: string; command: string; exitCode: number; seconds: number },
+): Push | null {
+  if (!cfg.topic) return null;
+  const ok = o.exitCode === 0;
+  const push: Push = {
+    topic: cfg.topic,
+    title: o.worktree,
+    message: `${ok ? "passed" : `failed (exit ${o.exitCode})`} in ${o.seconds}s — ${o.command}`.slice(0, 300),
+    tags: [ok ? "white_check_mark" : "x"],
+    priority: PRIORITY.informational,
+  };
+  if (cfg.dashUrl) push.click = `${cfg.dashUrl}/w?wt=${encodeURIComponent(o.worktree)}`;
+  return push;
+}
+
+export type Option = { key: string; label: string; description?: string };
+
 /** Options for whatever this session is currently waiting on, if anything. */
-export async function pendingOptions(sessionId: string): Promise<{ key: string; label: string }[]> {
+export async function pendingOptions(sessionId: string): Promise<Option[]> {
   const s = (await listSessions()).find((x) => x.sessionId === sessionId);
   const p = await pending(sessionId, s?.zmx ?? null);
   if (!p) return [];
   if (p.kind === "permission" || p.kind === "live-question") return p.options;
-  // An AskUserQuestion from the transcript numbers its options by position.
+  // An AskUserQuestion from the transcript numbers its options by position, and
+  // is the only shape that carries descriptions at all.
   if (p.kind === "question") {
-    return (p.questions[0]?.options ?? []).map((c, i) => ({ key: String(i + 1), label: c.label }));
+    return (p.questions[0]?.options ?? []).map((c, i) => ({
+      key: String(i + 1),
+      label: c.label,
+      description: c.description,
+    }));
   }
   return [];
+}
+
+/**
+ * The options, spelled out in the notification body.
+ *
+ * A button label is capped at 24 characters, so "Yes, and don't ask again,
+ * allow all edits" arrives as "Yes, and don't ask again". You cannot choose
+ * between options you can only half read. The body has room, so put the full
+ * text there and let the buttons be the shortcut rather than the only source.
+ */
+export function optionLines(options: Option[]): string {
+  return options
+    .map((o) => {
+      const head = `${o.key}. ${o.label}`.slice(0, 160);
+      const desc = o.description?.replace(/\s+/g, " ").trim();
+      return desc ? `${head}\n   ${desc.slice(0, 200)}` : head;
+    })
+    .join("\n");
 }
 
 export async function send(push: Push): Promise<boolean> {
@@ -158,9 +240,15 @@ export async function send(push: Push): Promise<boolean> {
 }
 
 /** Resolve what the session is waiting on, then push it with buttons. */
-export async function notify(o: { sessionId: string; project: string; message: string }): Promise<{ ok: boolean; actions: number }> {
+export async function notify(
+  o: { sessionId: string; project: string; message: string; type?: string | null },
+): Promise<{ ok: boolean; actions: number; suppressed?: boolean }> {
+  // You are already looking at it. The prompt card is on screen.
+  if (isViewing(o.sessionId)) return { ok: true, actions: 0, suppressed: true };
+
   const cfg = await readConfig();
-  const options = await pendingOptions(o.sessionId).catch(() => []);
+  // Only worth a zmx spawn when there is something to answer.
+  const options = isUrgent(o.type) ? await pendingOptions(o.sessionId).catch(() => []) : [];
   const push = buildPush(cfg, { ...o, options });
   if (!push) return { ok: false, actions: 0 };
   return { ok: await send(push), actions: push.actions?.length ?? 0 };
@@ -269,6 +357,61 @@ if (import.meta.main) {
   })!;
   assert.equal(full.actions?.length, 3);
   assert.ok(JSON.stringify(full).length < 4000, "ntfy rejects oversized payloads");
+
+  // --- run completion pushes ---
+  const pass = buildRunPush(good, { worktree: "/w/repo", command: "bun test", exitCode: 0, seconds: 12 })!;
+  assert.ok(pass.message.startsWith("passed in 12s"));
+  assert.deepEqual(pass.tags, ["white_check_mark"]);
+  assert.equal(pass.priority, 4, "a finished run blocks nothing — must not be as loud as a prompt");
+  assert.equal(pass.actions, undefined, "there is nothing to answer");
+  assert.ok(pass.click?.includes("/w?wt="), "clicking goes to the worktree, not a session");
+
+  const fail = buildRunPush(good, { worktree: "/w/repo", command: "bun run build", exitCode: 2, seconds: 240 })!;
+  assert.ok(fail.message.startsWith("failed (exit 2) in 240s"));
+  assert.deepEqual(fail.tags, ["x"]);
+
+  assert.equal(buildRunPush({ topic: null, dashUrl: null }, { worktree: "w", command: "c", exitCode: 0, seconds: 1 }), null);
+
+  // --- idle_prompt is not a permission prompt ---
+  assert.equal(isUrgent("permission_prompt"), true);
+  assert.equal(isUrgent("idle_prompt"), false);
+  assert.equal(isUrgent(null), true, "unknown types must stay loud, not silently vanish");
+
+  const idle = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude is waiting for your input",
+    options: opts, type: "idle_prompt",
+  })!;
+  assert.equal(idle.priority, 2, "you have not typed lately; nothing is blocked");
+  assert.equal(idle.actions, undefined, "an idle nudge has nothing to answer");
+  assert.deepEqual(idle.tags, ["speech_balloon"]);
+
+  // --- the body must carry what the buttons cannot ---
+  assert.equal(
+    optionLines([{ key: "1", label: "Yes" }, { key: "2", label: "No" }]),
+    "1. Yes\n2. No",
+  );
+  assert.equal(
+    optionLines([{ key: "1", label: "Yes", description: "does   the\n thing" }]),
+    "1. Yes\n   does the thing",
+    "descriptions are included and whitespace collapsed",
+  );
+
+  const spelled = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude needs your permission",
+    options: opts, type: "permission_prompt",
+  })!;
+  // The label the button shows is cut at 24 chars; the full text must survive
+  // in the body or you are choosing between options you can only half read.
+  assert.ok(spelled.message.includes("2. Yes, and don't ask again, allow all edits"));
+  assert.ok(spelled.actions![1].label.length === LABEL_MAX);
+
+  const perm = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude needs your permission",
+    options: opts, type: "permission_prompt",
+  })!;
+  assert.equal(perm.priority, 5);
+  assert.equal(perm.actions?.length, 3);
+  assert.deepEqual(perm.tags, ["bell"]);
 
   console.log("ok");
 }

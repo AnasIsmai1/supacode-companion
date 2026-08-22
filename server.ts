@@ -16,13 +16,15 @@ import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
 import { liveTool, readEvents } from "./lib/events.ts";
 import { agentsFor } from "./lib/agents.ts";
-import { notify } from "./lib/notify.ts";
+import { isUrgent, notify } from "./lib/notify.ts";
+import { recency, touchActed, touchViewed } from "./lib/presence.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
 import { diffStat, diffSummary, filePatch, resolveWorktree } from "./lib/diff.ts";
 import { runState, scripts, startRun, stopRun } from "./lib/run.ts";
 import { commit, createPR, discardAll, push, restoreFile, status } from "./lib/git.ts";
+import { comment as prComment, merge as prMerge, view as prView, type MergeMethod } from "./lib/pr.ts";
 import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 
@@ -41,8 +43,9 @@ function fromTranscript(v: string | null): Mode | null {
   }
 }
 
-const RANK = { ask: 0, busy: 1, idle: 2, shell: 3 } as const;
-const rank = (s: Session) => (s.ask ? RANK.ask : RANK[s.status] ?? 3);
+const RANK = { ask: 0, stuck: 1, busy: 2, idle: 3, shell: 4 } as const;
+const rank = (s: Session) =>
+  s.ask && isUrgent(s.ask.type) ? RANK.ask : s.stuck ? RANK.stuck : RANK[s.status] ?? RANK.shell;
 
 const json = (v: unknown, status = 200) =>
   Response.json(v, { status, headers: { "cache-control": "no-store" } });
@@ -66,7 +69,7 @@ async function list() {
         dirty: w?.dirty ?? false,
       };
     })
-    .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
+    .sort((a, b) => rank(a) - rank(b) || recency(b.sessionId, b.updatedAt) - recency(a.sessionId, a.updatedAt));
 
   const taken = new Set(sessions.map((s) => s.cwd));
   const dormant = worktrees
@@ -167,6 +170,7 @@ const server = Bun.serve<WSData>({
 
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
+      touchActed(send[1]);
       // A message accepted mid-turn goes into Claude's OWN queue, not the
       // transcript, and can sit there for minutes. Reporting that as "sent" is
       // how the echo ends up claiming something that has not happened yet.
@@ -183,6 +187,7 @@ const server = Bun.serve<WSData>({
       if (!s?.zmx) return json({ error: "session not found" }, 404);
       const { key } = (await req.json().catch(() => ({}))) as { key?: string };
       if (!/^[1-9]$/.test(String(key))) return json({ error: "key must be 1-9" }, 400);
+      touchActed(ans[1]);
 
       const live = await pendingLiveQuestion(s.zmx);
       if (live && live.kind === "live-question") {
@@ -203,6 +208,7 @@ const server = Bun.serve<WSData>({
     // --- one payload for the chat header: state + prompt, no zmx spawn ---
     const sess = p.match(/^\/api\/session\/([0-9a-f-]{36})$/i);
     if (sess) {
+      touchViewed(sess[1]);
       const s = await findSession(sess[1]);
       if (!s) return json({ error: "session not found" }, 404);
       const hit = s.pid != null ? windowByPid().get(s.pid) : undefined;
@@ -310,6 +316,7 @@ const server = Bun.serve<WSData>({
       if (!s?.zmx) return json({ error: "session not found" }, 404);
       const { text } = (await req.json().catch(() => ({}))) as { text?: string };
       if (!String(text ?? "").trim()) return json({ error: "empty" }, 400);
+      touchActed(chatAbout[1]);
 
       let cur = await pendingLiveQuestion(s.zmx);
       if (!cur || cur.kind !== "live-question") return json({ error: "no live question" }, 409);
@@ -434,8 +441,47 @@ const server = Bun.serve<WSData>({
         sessionId: String(b.sessionId),
         project: String(b.project ?? "claude").slice(0, 60),
         message: String(b.message ?? "needs your input").slice(0, 300),
+        type: b.type ? String(b.type).slice(0, 40) : null,
       });
+      // Suppressed is a success: the prompt is already on your screen.
       return r.ok ? json(r) : json({ ...r, error: "ntfy send failed" }, 502);
+    }
+
+    // --- the pull request for this worktree's branch ---
+    // --- State, checks and review in one payload; comment and merge to act. ---
+    if (p.startsWith("/api/pr")) {
+      const wt = await resolveWorktree(url.searchParams.get("wt"));
+      if (!wt) return json({ error: "unknown worktree" }, 404);
+
+      if (p === "/api/pr" && req.method !== "POST") {
+        return json(await prView(wt, url.searchParams.get("force") === "1"));
+      }
+      if (req.method !== "POST") return json({ error: "not found" }, 404);
+      const b = (await req.json().catch(() => ({}))) as Record<string, string>;
+
+      if (p === "/api/pr/comment") {
+        const r = await prComment(wt, String(b.body ?? ""));
+        return r.ok ? json({ ok: true, out: r.out }) : json({ error: r.error }, 502);
+      }
+      if (p === "/api/pr/merge") {
+        // Merging is the most consequential thing reachable from a phone, so it
+        // takes the same typed confirm as discarding the tree.
+        if (b.confirm !== "merge") return json({ error: "confirmation required" }, 400);
+        const method = (["merge", "squash", "rebase"] as const).find((m) => m === b.method) ?? "squash";
+        const r = await prMerge(wt, method as MergeMethod, { allowFailingChecks: b.force === "yes" });
+        return r.ok ? json({ ok: true, out: r.out }) : json({ error: r.error }, 409);
+      }
+      return json({ error: "not found" }, 404);
+    }
+
+    // --- the backlog, read only ---
+    // --- TODO.md is the source of truth and stays editable on the Mac. This
+    // --- exists so the list is legible from the phone, nothing more.
+    if (p === "/api/todo") {
+      const f = Bun.file(join(import.meta.dir, "TODO.md"));
+      return (await f.exists())
+        ? json({ markdown: await f.text() })
+        : json({ error: "no TODO.md" }, 404);
     }
 
     // --- disk browser, for adding a project ---

@@ -14,6 +14,7 @@ const Browse = lazy(() => import("@/views/Browse").then((m) => ({ default: m.Bro
 // tree's first paint either.
 const Work = lazy(() => import("@/views/Work").then((m) => ({ default: m.Work })));
 const Share = lazy(() => import("@/views/Share").then((m) => ({ default: m.Share })));
+const Todo = lazy(() => import("@/views/Todo").then((m) => ({ default: m.Todo })));
 
 type Route =
   | { view: "tree" }
@@ -21,6 +22,7 @@ type Route =
   | { view: "term"; id: string; title: string }
   | { view: "work"; wt: string }
   | { view: "share"; id: string }
+  | { view: "todo" }
   | { view: "browse" };
 
 function parse(): Route {
@@ -31,6 +33,7 @@ function parse(): Route {
     return { view: "term", id: m[1], title: new URLSearchParams(location.search).get("t") ?? "terminal" };
   }
   if (p === "/browse") return { view: "browse" };
+  if (p === "/todo") return { view: "todo" };
   // /share-target stashes the files and redirects here. Without this case the
   // redirect fell through to the tree and the stash quietly expired.
   if ((m = p.match(/^\/share\/([0-9a-f-]{36})$/i))) return { view: "share", id: m[1] };
@@ -74,6 +77,7 @@ export default function App() {
         {route.view === "share" && (
           <Share id={route.id} onOpen={(sid) => go(`/s/${sid}`)} onBack={() => go("/")} />
         )}
+        {route.view === "todo" && <Todo onBack={() => go("/")} />}
         {route.view === "browse" && <Browse onDone={() => go("/")} />}
       </Suspense>
 
@@ -85,6 +89,7 @@ export default function App() {
               : go(`/t/${w.surfaceId}?t=${encodeURIComponent(w.title)}`)
           }
           onBrowse={() => go("/browse")}
+          onTodo={() => go("/todo")}
           onWork={(wt) => go(`/w?wt=${encodeURIComponent(wt.id)}`)}
           onNewWindow={setNewWindowFor}
         />

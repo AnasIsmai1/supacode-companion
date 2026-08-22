@@ -5,6 +5,7 @@ export type Win = {
   agent: string | null; pid: number | null; index: number;
   sessionId: string | null; status: "idle" | "busy" | "shell" | null;
   ask: { message: string; type: string; at: number } | null; updatedAt: number;
+  stuck: number | null;
 };
 export type Worktree = { id: string; path: string; branch: string | null; dirty: boolean; lastCommit: number | null; windows: Win[]; attention: number };
 export type Project = { name: string; worktrees: Worktree[]; attention: number; live: number };
