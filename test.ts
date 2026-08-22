@@ -205,4 +205,37 @@ const t0 = Date.now();
 commands();
 assert.ok(Date.now() - t0 < 20, "second call must come from cache");
 
+// --- stuckFor: "busy" alone never says where an agent is wedged ---
+{
+  const { stuckFor, STUCK_MS, STUCK_BLIND_MS } = await import("./lib/sessions.ts");
+  const now = 1_800_000_000_000;
+  assert.equal(stuckFor("idle", now - 60 * 60_000, 0, now), null, "idle is not stuck, it is done");
+  assert.equal(stuckFor("shell", now - 60 * 60_000, 0, now), null);
+  assert.equal(stuckFor("busy", now - 1_000, 0, now), null, "a normal tool call is not stuck");
+  // No heartbeat: only the turn boundary is known, so the bar is much higher.
+  // A 12-minute turn is plausible; claiming it is stuck cries wolf.
+  assert.equal(stuckFor("busy", now - 12 * 60_000, 0, now), null, "blind path tolerates a long turn");
+  assert.equal(stuckFor("busy", now - STUCK_BLIND_MS, 0, now), STUCK_BLIND_MS, "blind bar");
+  assert.equal(stuckFor("busy", now - 37 * 60 * 60_000, 0, now), 37 * 60 * 60_000, "37h is stuck by any measure");
+
+  // With a heartbeat, every tool call is visible, so the bar can be tight.
+  assert.equal(stuckFor("busy", 0, now - STUCK_MS + 1, now), null, "just under the line");
+  assert.equal(stuckFor("busy", 0, now - STUCK_MS, now), STUCK_MS, "at the line");
+  assert.equal(stuckFor("busy", 0, 0, now), null, "no timestamp -> no claim");
+
+  // The heartbeat wins over updatedAt. This is the false positive that showed
+  // up live: a healthy session mid-long-turn read as 5 minutes quiet because
+  // updatedAt only moves at turn boundaries, while hooks fire per tool call.
+  assert.equal(
+    stuckFor("busy", now - 30 * 60_000, now - 2_000, now),
+    null,
+    "tools firing 2s ago -> healthy, whatever updatedAt says",
+  );
+  assert.equal(
+    stuckFor("busy", now - 2_000, now - 30 * 60_000, now),
+    30 * 60_000,
+    "no tool for 30m -> stuck, even if the turn boundary looks recent",
+  );
+}
+
 console.log("ok");

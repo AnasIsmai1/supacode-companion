@@ -110,7 +110,12 @@ function FlatRow({ row, onOpen }: { row: Flat; onOpen: (w: Win) => void }) {
           {[row.project, row.branch].filter(Boolean).join(" · ")}
         </span>
       </span>
-      <span className="shrink-0 text-xs tabular-nums text-faint">{ago(row.w.updatedAt)}</span>
+      <span
+        className={cn("shrink-0 text-xs tabular-nums", row.w.stuck ? "text-warning" : "text-faint")}
+        title={row.w.stuck ? "busy, but nothing written for this long" : undefined}
+      >
+        {row.w.stuck ? `quiet ${ago(row.w.updatedAt)}` : ago(row.w.updatedAt)}
+      </span>
     </button>
   );
 }
@@ -141,7 +146,10 @@ export function Tree({
 
   const hits = flat.filter(matches);
   const needsYou = hits.filter((r) => r.w.ask);
-  const working = hits.filter((r) => !r.w.ask && r.w.status === "busy");
+  // Quiet-but-busy first: "busy" alone never tells you where something wedged.
+  const working = hits
+    .filter((r) => !r.w.ask && r.w.status === "busy")
+    .sort((a, b) => (b.w.stuck ?? 0) - (a.w.stuck ?? 0));
   const recent = hits
     .filter((r) => !r.w.ask && r.w.status !== "busy")
     .sort((a, b) => b.w.updatedAt - a.w.updatedAt)

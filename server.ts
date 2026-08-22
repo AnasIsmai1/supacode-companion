@@ -42,8 +42,9 @@ function fromTranscript(v: string | null): Mode | null {
   }
 }
 
-const RANK = { ask: 0, busy: 1, idle: 2, shell: 3 } as const;
-const rank = (s: Session) => (s.ask && isUrgent(s.ask.type) ? RANK.ask : RANK[s.status] ?? 3);
+const RANK = { ask: 0, stuck: 1, busy: 2, idle: 3, shell: 4 } as const;
+const rank = (s: Session) =>
+  s.ask && isUrgent(s.ask.type) ? RANK.ask : s.stuck ? RANK.stuck : RANK[s.status] ?? RANK.shell;
 
 const json = (v: unknown, status = 200) =>
   Response.json(v, { status, headers: { "cache-control": "no-store" } });

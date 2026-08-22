@@ -4,13 +4,14 @@
 // not a public API. Everything that reads it lives in this module so a Claude
 // Code update breaks one file. See the plan's risk #1.
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ZMX } from "./zmx.ts";
 
 const SESSIONS_DIR = join(homedir(), ".claude", "sessions");
 export const SPOOL_DIR = join(homedir(), ".claude", "companion", "spool");
+const EVENTS_DIR = join(homedir(), ".claude", "companion", "events");
 
 export type Ask = { message: string; type: string; at: number };
 
@@ -22,8 +23,69 @@ export type Session = {
   status: "idle" | "busy" | "shell";
   zmx: string | null; // owning zmx session name, null if not under one
   updatedAt: number;
+  /** When the status last changed — how long it has been busy. */
+  statusUpdatedAt: number;
   ask: Ask | null;
+  /** ms it has been busy with nothing written, or null. See stuckFor(). */
+  stuck: number | null;
 };
+
+/**
+ * How long a session has been busy without doing anything, or null.
+ *
+ * "Busy" alone tells you nothing, and that is the one thing a status field
+ * cannot say. Found immediately on switching this on: two sessions had been
+ * reporting `busy` for 37 and 18 hours.
+ *
+ * `updatedAt` alone is the wrong clock. It moves at turn boundaries, so a
+ * genuinely healthy session running a long turn looks identical to a wedged one
+ * — verified against this very session, which read 5 minutes quiet while
+ * actively running tools. hooks/events.sh appends on EVERY PreToolUse and
+ * PostToolUse, so the events file's mtime is the real heartbeat. Fall back to
+ * updatedAt only when no events file exists yet.
+ *
+ * Deliberately a duration, not a boolean: the caller picks the threshold, and
+ * the UI can show "37h" rather than a binary that hides how bad it is.
+ */
+export function stuckFor(
+  status: string,
+  updatedAt: number,
+  lastActivity = 0,
+  now = Date.now(),
+): number | null {
+  if (status !== "busy") return null;
+  // With a heartbeat we know each tool call; without one, all we have is the
+  // turn boundary, which cannot tell a long turn from a wedge. So the blind
+  // path gets a far higher bar rather than crying wolf at every long build.
+  const beat = lastActivity || updatedAt;
+  if (!beat) return null;
+  const bar = lastActivity ? STUCK_MS : STUCK_BLIND_MS;
+  const quiet = now - beat;
+  return quiet >= bar ? quiet : null;
+}
+
+/** mtime of the hook event stream — a heartbeat per tool call, not per turn. */
+function heartbeat(sessionId: string): number {
+  try {
+    return statSync(join(EVENTS_DIR, `${sessionId}.jsonl`)).mtimeMs;
+  } catch {
+    return 0; // no events yet; caller falls back to updatedAt
+  }
+}
+
+/** Below this, a quiet busy session is just a normal tool call. */
+export const STUCK_MS = 4 * 60_000;
+
+/**
+ * The bar when there is no heartbeat to go on.
+ *
+ * Claude Code caches hooks at session start, so a session running since before
+ * hooks/events.sh was registered will never produce events. For those, all we
+ * have is `updatedAt` — the turn boundary — and a 30-minute turn is plausible
+ * while a 30-minute silence with no turn end is not. Sessions started after
+ * registration get the accurate 4-minute bar automatically.
+ */
+export const STUCK_BLIND_MS = 30 * 60_000;
 
 /** Strip ANSI escapes and control chars. Moved from bin/sup. */
 export function clean(s: string): string {
@@ -133,15 +195,19 @@ async function scanSessions(): Promise<Session[]> {
     if (d.kind === "bg") continue; // background agents have no zmx session
     if (!par.has(d.pid)) continue; // stale record, process is gone
 
+    const status = d.status ?? "idle";
+    const updatedAt = d.updatedAt ?? d.startedAt ?? 0;
     out.push({
       pid: d.pid,
       sessionId: d.sessionId,
       cwd: d.cwd,
       name: d.name ?? d.sessionId.slice(0, 8),
-      status: d.status ?? "idle",
+      status,
       zmx: ownerZmx(d.pid, par, zmx),
-      updatedAt: d.updatedAt ?? d.startedAt ?? 0,
+      updatedAt,
+      statusUpdatedAt: d.statusUpdatedAt ?? updatedAt,
       ask: readAsk(d.sessionId),
+      stuck: stuckFor(status, updatedAt, heartbeat(d.sessionId)),
     });
   }
   return out;

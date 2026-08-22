@@ -11,16 +11,19 @@ export type Win = LayoutWindow & {
   status: Session["status"] | null;
   ask: Session["ask"];
   updatedAt: number;
+  /** ms busy with nothing written; null when it is behaving. */
+  stuck: number | null;
 };
 
 export type Worktree = Omit<WT, "repo"> & { windows: Win[]; attention: number };
 export type Project = { name: string; worktrees: Worktree[]; attention: number; live: number };
 
-const RANK = { ask: 0, busy: 1, idle: 2, shell: 3, none: 4 } as const;
+const RANK = { ask: 0, stuck: 1, busy: 2, idle: 3, shell: 4, none: 5 } as const;
 // An idle_prompt only means you have not typed lately. Ranking it as
 // attention put 17 of 21 sessions in "Needs you", which is the same as none.
 const needsYou = (w: Win) => Boolean(w.ask && isUrgent(w.ask.type));
-const winRank = (w: Win) => (needsYou(w) ? RANK.ask : w.status ? RANK[w.status] ?? RANK.none : RANK.none);
+const winRank = (w: Win) =>
+  needsYou(w) ? RANK.ask : w.stuck ? RANK.stuck : w.status ? RANK[w.status] ?? RANK.none : RANK.none;
 
 export async function tree(): Promise<{ projects: Project[]; live: number; at: number }> {
   const [sessions, worktrees] = await Promise.all([listSessions(), listWorktrees()]);
@@ -38,6 +41,7 @@ export async function tree(): Promise<{ projects: Project[]; live: number; at: n
         status: s?.status ?? null,
         ask: s?.ask ?? null,
         updatedAt: s?.updatedAt ?? 0,
+        stuck: s?.stuck ?? null,
       };
     });
     windows.sort((a, b) => a.index - b.index);
