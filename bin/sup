@@ -10,6 +10,7 @@
 //   sup status     is the whole chain up? launchd, port, http, serve, peers
 //   sup up         build web, install the launchd job, ensure tailscale serve
 //   sup restart    kickstart the job, then status
+//   sup bench      time the hot paths, so the perf comments cannot go stale
 
 import { listSessions } from "../lib/sessions.ts";
 import { listWorktrees } from "../lib/worktrees.ts";
@@ -17,13 +18,22 @@ import { windowByPid } from "../lib/layout.ts";
 import { readChat } from "../lib/transcript.ts";
 import { ZMX } from "../lib/zmx.ts";
 import { payload } from "../lib/send.ts";
-import { install, lastError, probe, restart } from "../lib/service.ts";
+import { bench, install, lastError, probe, restart } from "../lib/service.ts";
 
 const [cmd0, ...rest0] = Bun.argv.slice(2);
 
 // The ops verbs answer before anything else runs: listSessions() below scans
 // every process on the machine, and `sup status` exists precisely for when the
 // server is NOT healthy.
+if (cmd0 === "bench") {
+  // Reprints what the comments used to assert and get wrong.
+  for (const b of await bench()) {
+    const tone = b.ms > 500 ? "\x1b[31m" : b.ms > 150 ? "\x1b[33m" : "\x1b[32m";
+    console.log(`  ${tone}${String(b.ms).padStart(6)}ms\x1b[0m  ${b.name.padEnd(24)} \x1b[2m${b.note}\x1b[0m`);
+  }
+  process.exit(0);
+}
+
 if (cmd0 === "status" || cmd0 === "up" || cmd0 === "restart") {
   const show = async () => {
     for (const l of await probe()) {

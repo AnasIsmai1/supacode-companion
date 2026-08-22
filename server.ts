@@ -24,6 +24,7 @@ import { listDir, safePath, HOME } from "./lib/fs.ts";
 import { diffStat, diffSummary, filePatch, resolveWorktree } from "./lib/diff.ts";
 import { runState, scripts, startRun, stopRun } from "./lib/run.ts";
 import { commit, createPR, discardAll, push, restoreFile, status } from "./lib/git.ts";
+import { comment as prComment, merge as prMerge, view as prView, type MergeMethod } from "./lib/pr.ts";
 import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 
@@ -444,6 +445,33 @@ const server = Bun.serve<WSData>({
       });
       // Suppressed is a success: the prompt is already on your screen.
       return r.ok ? json(r) : json({ ...r, error: "ntfy send failed" }, 502);
+    }
+
+    // --- the pull request for this worktree's branch ---
+    // --- State, checks and review in one payload; comment and merge to act. ---
+    if (p.startsWith("/api/pr")) {
+      const wt = await resolveWorktree(url.searchParams.get("wt"));
+      if (!wt) return json({ error: "unknown worktree" }, 404);
+
+      if (p === "/api/pr" && req.method !== "POST") {
+        return json(await prView(wt, url.searchParams.get("force") === "1"));
+      }
+      if (req.method !== "POST") return json({ error: "not found" }, 404);
+      const b = (await req.json().catch(() => ({}))) as Record<string, string>;
+
+      if (p === "/api/pr/comment") {
+        const r = await prComment(wt, String(b.body ?? ""));
+        return r.ok ? json({ ok: true, out: r.out }) : json({ error: r.error }, 502);
+      }
+      if (p === "/api/pr/merge") {
+        // Merging is the most consequential thing reachable from a phone, so it
+        // takes the same typed confirm as discarding the tree.
+        if (b.confirm !== "merge") return json({ error: "confirmation required" }, 400);
+        const method = (["merge", "squash", "rebase"] as const).find((m) => m === b.method) ?? "squash";
+        const r = await prMerge(wt, method as MergeMethod, { allowFailingChecks: b.force === "yes" });
+        return r.ok ? json({ ok: true, out: r.out }) : json({ error: r.error }, 409);
+      }
+      return json({ error: "not found" }, 404);
     }
 
     // --- disk browser, for adding a project ---

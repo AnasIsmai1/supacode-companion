@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun run server.ts",
     "check": "tsc --noEmit",
-    "test": "bun test.ts && bun lib/events.test.ts && bun lib/running.ts && bun lib/diff.ts && bun lib/run.ts && bun lib/git.ts && bun lib/send.ts && bun lib/service.ts && bun lib/notify.ts && bun lib/presence.ts && shellcheck hooks/*.sh"
+    "test": "bun test.ts && bun lib/events.test.ts && bun lib/running.ts && bun lib/diff.ts && bun lib/run.ts && bun lib/git.ts && bun lib/send.ts && bun lib/service.ts && bun lib/notify.ts && bun lib/presence.ts && bun lib/pr.ts && shellcheck hooks/*.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",
