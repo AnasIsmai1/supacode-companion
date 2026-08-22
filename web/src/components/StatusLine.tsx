@@ -61,7 +61,7 @@ export function StatusLine({
       : "idle";
 
   return (
-    <div className="flex items-center gap-2 border-b border-line bg-surface/60 px-4 py-1.5 text-xs">
+    <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden border-b border-line bg-surface/60 px-4 py-1.5 text-xs">
       <Icon className={cn("size-3.5 shrink-0", tone, working && "animate-spin")} aria-hidden />
       <span className={cn("min-w-0 flex-1 truncate", waiting ? "text-warning" : "text-muted")}>{label}</span>
 

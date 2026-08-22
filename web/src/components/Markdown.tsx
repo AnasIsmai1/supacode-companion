@@ -124,7 +124,9 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
             const lang = /language-(\w+)/.exec(className ?? "")?.[1];
             // Fenced blocks arrive with a language class; inline code does not.
             if (lang || text.includes("\n")) return <CodeBlock code={text} lang={lang ?? ""} />;
-            return <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-[13px] text-warning" {...props}>{text}</code>;
+            // break-all, not break-words: `overflow-x-hidden` is a single token with
+            // no break opportunity in it, and on a phone it is wider than the column.
+            return <code className="rounded bg-surface px-1 py-0.5 font-mono text-[13px] break-all text-warning" {...props}>{text}</code>;
           },
           pre: ({ children }) => <>{children}</>,
         }}

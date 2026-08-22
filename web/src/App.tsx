@@ -71,6 +71,7 @@ export default function App() {
             onBack={() => go("/")}
             onTerminal={(surfaceId, title) => go(`/t/${surfaceId}?t=${encodeURIComponent(title)}`)}
             onWork={(wt) => go(`/w?wt=${encodeURIComponent(wt)}`)}
+            onTodo={() => go("/todo")}
           />
         )}
         {route.view === "term" && (

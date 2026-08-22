@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowUp, Bot, ChevronDown, ChevronLeft, FileDiff, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, ArrowUp, Bot, ChevronDown, ChevronLeft, FileDiff, ListTodo, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/Composer";
 import { AsciiPreview } from "@/components/AsciiPreview";
@@ -319,11 +319,12 @@ const GRACE_MS = 8000;
 /** Locally-echoed message, shown until the transcript catches up. */
 type Echo = { id: number; text: string; failed: boolean; confirmed: boolean; queued?: boolean };
 
-export function Chat({ sessionId, onBack, onTerminal, onWork }: {
+export function Chat({ sessionId, onBack, onTerminal, onWork, onTodo }: {
   sessionId: string;
   onBack: () => void;
   onTerminal: (surfaceId: string, title: string) => void;
   onWork: (worktreeId: string) => void;
+  onTodo: () => void;
 }) {
   const { turns, connected } = useTurns(sessionId);
   const [meta, setMeta] = useState<{
@@ -427,7 +428,7 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <header className="shrink-0 flex items-center gap-1 border-b border-line bg-bg px-2 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+      <header className="shrink-0 flex w-full min-w-0 items-center gap-0.5 overflow-hidden border-b border-line bg-bg px-1 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to sessions">
           <ChevronLeft className="size-5" aria-hidden />
         </Button>
@@ -443,27 +444,6 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
             ? <Wifi className="size-4 text-success" aria-label="Live" />
             : <WifiOff className="size-4 animate-pulse text-warning" aria-label="Reconnecting" />}
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={!(meta?.session as any)?.worktreeId}
-          onClick={() => {
-            const id = (meta?.session as any)?.worktreeId;
-            if (id) onWork(id);
-          }}
-          aria-label="Review changes"
-        >
-          <FileDiff className="size-5" aria-hidden />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={!meta?.session?.surfaceId}
-          onClick={() => meta?.session?.surfaceId && onTerminal(meta.session.surfaceId, meta.session.title ?? "terminal")}
-          aria-label="Open terminal"
-        >
-          <SquareTerminal className="size-5" aria-hidden />
-        </Button>
         <Button variant="ghost" size="icon" onClick={() => setMenu(true)} aria-label="Window actions">
           <MoreVertical className="size-5" aria-hidden />
         </Button>
@@ -472,6 +452,40 @@ export function Chat({ sessionId, onBack, onTerminal, onWork }: {
       {/* One menu on the view you are in, rather than a cross on every row. */}
       <Sheet open={menu} onOpenChange={setMenu} title={meta?.session?.title ?? "Window"}>
         <p className="mb-4 break-words font-mono text-xs text-muted">{meta?.session?.worktree}</p>
+
+        <Button
+          variant="outline"
+          className="mb-2 w-full"
+          disabled={!(meta?.session as any)?.worktreeId}
+          onClick={() => {
+            const id = (meta?.session as any)?.worktreeId;
+            setMenu(false);
+            if (id) onWork(id);
+          }}
+        >
+          <FileDiff className="size-4" aria-hidden />
+          Review changes
+        </Button>
+
+        <Button
+          variant="outline"
+          className="mb-2 w-full"
+          disabled={!meta?.session?.surfaceId}
+          onClick={() => {
+            const id = meta?.session?.surfaceId;
+            setMenu(false);
+            if (id) onTerminal(id, meta?.session?.title ?? "terminal");
+          }}
+        >
+          <SquareTerminal className="size-4" aria-hidden />
+          Open terminal
+        </Button>
+
+        <Button variant="outline" className="mb-4 w-full" onClick={() => { setMenu(false); onTodo(); }}>
+          <ListTodo className="size-4" aria-hidden />
+          Backlog
+        </Button>
+
         <Button
           variant="danger"
           className="w-full"
