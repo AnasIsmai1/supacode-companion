@@ -1,0 +1,252 @@
+// Push notifications that carry the decision, not just a link to it.
+//
+// A permission prompt is the most common thing this tool exists for, and until
+// now answering one meant: unlock, open the PWA, wait for the tree, tap in,
+// tap the option. Five steps to press "1".
+//
+// ntfy's `http` action is performed by the ntfy APP ON THE PHONE, from the
+// phone's own network — not by ntfy.sh's servers. Verified against
+// docs.ntfy.sh/publish. The phone is on the tailnet, so an action button can
+// POST straight to /api/answer with nothing exposed publicly and no auth added.
+// That is the whole reason this is possible at all.
+//
+// Config lives outside the repo at ~/.claude/companion/config.env (chmod 600):
+//   NTFY_TOPIC=<random>
+//   DASH_URL=https://<machine>.<tailnet>.ts.net
+//
+// Self-check: bun lib/notify.ts
+
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { pending } from "./prompts.ts";
+import { listSessions } from "./sessions.ts";
+
+const CONFIG = join(homedir(), ".claude", "companion", "config.env");
+
+/** ntfy renders at most three, and drops the whole notification if given more. */
+const MAX_ACTIONS = 3;
+/** A phone notification is not a place to read a sentence. */
+const LABEL_MAX = 24;
+
+export type Config = { topic: string | null; dashUrl: string | null };
+
+export function parseConfig(text: string): Config {
+  const get = (k: string) => text.match(new RegExp(`^${k}=(.+)$`, "m"))?.[1]?.trim().replace(/^["']|["']$/g, "") ?? null;
+  return { topic: get("NTFY_TOPIC"), dashUrl: get("DASH_URL")?.replace(/\/+$/, "") ?? null };
+}
+
+export async function readConfig(): Promise<Config> {
+  const f = Bun.file(CONFIG);
+  return (await f.exists()) ? parseConfig(await f.text()) : { topic: null, dashUrl: null };
+}
+
+/**
+ * Can this URL host action buttons?
+ *
+ * The phone performs the request, so a loopback DASH_URL points the button at
+ * the PHONE. That is not a hypothetical — DASH_URL really was
+ * http://127.0.0.1:7777 here, which is why every notification tap did nothing
+ * for as long as notifications existed.
+ */
+export function actionable(dashUrl: string | null): boolean {
+  return Boolean(dashUrl && !/^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])\b/.test(dashUrl));
+}
+
+export type Action = {
+  action: "http";
+  label: string;
+  url: string;
+  method: "POST";
+  headers: Record<string, string>;
+  body: string;
+  clear: boolean;
+};
+
+export type Push = {
+  topic: string;
+  title: string;
+  message: string;
+  click?: string;
+  tags: string[];
+  actions?: Action[];
+};
+
+const label = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || "?";
+
+/** One button per option, capped at what ntfy will render. */
+export function buildActions(
+  dashUrl: string,
+  sessionId: string,
+  options: { key: string; label: string }[],
+): Action[] {
+  return options.slice(0, MAX_ACTIONS).map((o) => ({
+    action: "http" as const,
+    label: label(o.label),
+    url: `${dashUrl}/api/answer/${sessionId}`,
+    method: "POST" as const,
+    headers: { "Content-Type": "application/json" },
+    // A label can contain commas, which the Actions *header* format cannot
+    // escape — so this is only ever sent via the JSON publish body.
+    body: JSON.stringify({ key: o.key }),
+    clear: true,
+  }));
+}
+
+export function buildPush(
+  cfg: Config,
+  o: { sessionId: string; project: string; message: string; options?: { key: string; label: string }[] },
+): Push | null {
+  if (!cfg.topic) return null;
+
+  const push: Push = {
+    topic: cfg.topic,
+    title: o.project,
+    message: o.message,
+    tags: ["bell"],
+  };
+  if (cfg.dashUrl) push.click = `${cfg.dashUrl}/s/${o.sessionId}`;
+
+  // No buttons rather than buttons that point at the phone itself.
+  if (o.options?.length && actionable(cfg.dashUrl)) {
+    push.actions = buildActions(cfg.dashUrl!, o.sessionId, o.options);
+  }
+  return push;
+}
+
+/** Options for whatever this session is currently waiting on, if anything. */
+export async function pendingOptions(sessionId: string): Promise<{ key: string; label: string }[]> {
+  const s = (await listSessions()).find((x) => x.sessionId === sessionId);
+  const p = await pending(sessionId, s?.zmx ?? null);
+  if (!p) return [];
+  if (p.kind === "permission" || p.kind === "live-question") return p.options;
+  // An AskUserQuestion from the transcript numbers its options by position.
+  if (p.kind === "question") {
+    return (p.questions[0]?.options ?? []).map((c, i) => ({ key: String(i + 1), label: c.label }));
+  }
+  return [];
+}
+
+export async function send(push: Push): Promise<boolean> {
+  try {
+    const r = await fetch("https://ntfy.sh/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(push),
+      signal: AbortSignal.timeout(8000),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve what the session is waiting on, then push it with buttons. */
+export async function notify(o: { sessionId: string; project: string; message: string }): Promise<{ ok: boolean; actions: number }> {
+  const cfg = await readConfig();
+  const options = await pendingOptions(o.sessionId).catch(() => []);
+  const push = buildPush(cfg, { ...o, options });
+  if (!push) return { ok: false, actions: 0 };
+  return { ok: await send(push), actions: push.actions?.length ?? 0 };
+}
+
+if (import.meta.main) {
+  const assert: typeof import("node:assert").strict = (await import("node:assert")).strict;
+
+  // --- config parsing ---
+  const cfg = parseConfig('NTFY_TOPIC=abc123\nDASH_URL=https://supacode.example.ts.net/\n# a comment\n');
+  assert.deepEqual(cfg, { topic: "abc123", dashUrl: "https://supacode.example.ts.net" });
+  assert.deepEqual(parseConfig(""), { topic: null, dashUrl: null });
+  assert.equal(parseConfig('DASH_URL="https://x.ts.net"').dashUrl, "https://x.ts.net");
+
+  // --- the loopback trap, which really happened ---
+  assert.equal(actionable("https://supacode.example.ts.net"), true);
+  assert.equal(actionable("http://127.0.0.1:7777"), false);
+  assert.equal(actionable("http://localhost:7777"), false);
+  assert.equal(actionable(null), false);
+
+  // --- actions ---
+  const opts = [
+    { key: "1", label: "Yes" },
+    { key: "2", label: "Yes, and don't ask again, allow all edits" },
+    { key: "3", label: "No" },
+    { key: "4", label: "Never" },
+  ];
+  const acts = buildActions("https://x.ts.net", "11111111-1111-1111-1111-111111111111", opts);
+  assert.equal(acts.length, MAX_ACTIONS, "ntfy drops the notification if given more than three");
+  assert.equal(acts[0].label, "Yes");
+  assert.equal(acts[1].label.length, LABEL_MAX, "long labels are cut, not wrapped");
+  assert.equal(acts[0].url, "https://x.ts.net/api/answer/11111111-1111-1111-1111-111111111111");
+  assert.deepEqual(JSON.parse(acts[2].body), { key: "3" });
+  assert.equal(acts[0].clear, true);
+
+  // A comma in a label must survive — this is exactly what the header format
+  // cannot express, and why we publish as JSON.
+  const comma = buildActions("https://x.ts.net", "abc", [{ key: "1", label: "Yes, allow all" }]);
+  assert.ok(comma[0].label.includes(","));
+  assert.equal(JSON.parse(JSON.stringify(comma))[0].label, "Yes, allow all");
+
+  // --- push assembly ---
+  const good: Config = { topic: "t", dashUrl: "https://x.ts.net" };
+  const p = buildPush(good, { sessionId: "sid", project: "repo", message: "needs you", options: opts })!;
+  assert.equal(p.topic, "t");
+  assert.equal(p.title, "repo");
+  assert.equal(p.click, "https://x.ts.net/s/sid");
+  assert.equal(p.actions?.length, 3);
+
+  // Loopback: still notify, just without buttons that would hit the phone.
+  const loop = buildPush({ topic: "t", dashUrl: "http://127.0.0.1:7777" }, {
+    sessionId: "sid", project: "repo", message: "needs you", options: opts,
+  })!;
+  assert.equal(loop.actions, undefined);
+  assert.ok(loop.click, "the link is still worth sending even when buttons are not");
+
+  // Nothing to answer -> a plain push, not an empty actions array.
+  assert.equal(buildPush(good, { sessionId: "s", project: "r", message: "m" })!.actions, undefined);
+
+  // No topic configured -> nothing at all, rather than a push to nowhere.
+  assert.equal(buildPush({ topic: null, dashUrl: "https://x.ts.net" }, { sessionId: "s", project: "r", message: "m" }), null);
+
+  // --- the wire shape ntfy actually requires ---
+  const wire = JSON.parse(JSON.stringify(p));
+  assert.equal(wire.actions[0].action, "http");
+  assert.equal(wire.actions[0].method, "POST");
+  assert.equal(wire.actions[0].headers["Content-Type"], "application/json");
+  assert.equal(typeof wire.actions[0].body, "string", "ntfy wants body as a STRING, not an object");
+
+  // --- the join that matters: a real permission screen -> real buttons ---
+  // pendingOptions() needs a live session, so drive the parser directly with a
+  // screen of the shape parsePermission is built for. Without this, nothing
+  // proves the parser's output actually fits buildActions().
+  const { parsePermission } = await import("./prompts.ts");
+  const screen = [
+    "\u23fa I'll update the config.",
+    "",
+    "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
+    "\u2502 Do you want to make this edit to config.ts?  \u2502",
+    "\u2502                                              \u2502",
+    "\u2502 \u276f 1. Yes                                     \u2502",
+    "\u2502   2. Yes, allow all edits during this session \u2502",
+    "\u2502   3. No, and tell Claude what to do differently \u2502",
+    "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+  ].join("\n");
+
+  const parsed = parsePermission(screen);
+  assert.ok(parsed && parsed.kind === "permission", "fixture must parse as a permission prompt");
+  const real = buildActions("https://x.ts.net", "sid", parsed.options);
+  assert.equal(real.length, 3);
+  assert.deepEqual(real.map((a) => a.label), [
+    "Yes",
+    "Yes, allow all edits dur",
+    "No, and tell Claude what",
+  ]);
+  // Option 2's label contains a comma; the header format could not carry it.
+  assert.deepEqual(JSON.parse(real[1].body), { key: "2" });
+
+  const full = buildPush(good, {
+    sessionId: "sid", project: "repo", message: "Claude needs your permission", options: parsed.options,
+  })!;
+  assert.equal(full.actions?.length, 3);
+  assert.ok(JSON.stringify(full).length < 4000, "ntfy rejects oversized payloads");
+
+  console.log("ok");
+}

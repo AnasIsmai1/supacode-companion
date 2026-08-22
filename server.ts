@@ -16,6 +16,7 @@ import { commands } from "./lib/commands.ts";
 import { readState } from "./lib/state.ts";
 import { liveTool, readEvents } from "./lib/events.ts";
 import { agentsFor } from "./lib/agents.ts";
+import { notify } from "./lib/notify.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
@@ -112,6 +113,8 @@ async function zmxForSurface(surfaceId: string): Promise<string | null> {
 }
 
 /** Files handed over by the Android share sheet, awaiting a session choice. */
+let lastAck: { at: number; body: string } | null = null;
+
 const shareInbox = new Map<string, { files: File[]; text: string; at: number }>();
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60_000;
@@ -408,6 +411,31 @@ const server = Bun.serve<WSData>({
             : json({ error: "confirmation required" }, 400);
       }
       return json({ error: "not found" }, 404);
+    }
+
+    // --- push a notification that carries the decision ---
+    // --- The hook calls this instead of curling ntfy itself: resolving what a
+    // --- session is waiting on needs listSessions + the screen parsers, all of
+    // --- which live here and are already warm.
+    // A tapped button proves phone -> tailnet -> this server. Pointing a TEST
+    // button at /api/answer would type a real digit into a real session, so the
+    // test path gets its own no-op that only records the round trip.
+    if (p === "/api/notify/ack" && req.method === "POST") {
+      lastAck = { at: Date.now(), body: await req.text().catch(() => "") };
+      console.log(`notify ack ${new Date(lastAck.at).toISOString()} ${lastAck.body.slice(0, 120)}`);
+      return json({ ok: true, at: lastAck.at });
+    }
+    if (p === "/api/notify/ack") return json(lastAck ?? { at: null });
+
+    if (p === "/api/notify" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as Record<string, string>;
+      if (!/^[0-9a-f-]{36}$/i.test(String(b.sessionId ?? ""))) return json({ error: "bad sessionId" }, 400);
+      const r = await notify({
+        sessionId: String(b.sessionId),
+        project: String(b.project ?? "claude").slice(0, 60),
+        message: String(b.message ?? "needs your input").slice(0, 300),
+      });
+      return r.ok ? json(r) : json({ ...r, error: "ntfy send failed" }, 502);
     }
 
     // --- disk browser, for adding a project ---
