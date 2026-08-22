@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowUp, Bot, ChevronDown, ChevronLeft, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, ArrowUp, Bot, ChevronDown, ChevronLeft, FileDiff, MessageSquare, MoreVertical, SquareTerminal, Trash2, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/Composer";
 import { AsciiPreview } from "@/components/AsciiPreview";
@@ -319,8 +319,11 @@ const GRACE_MS = 8000;
 /** Locally-echoed message, shown until the transcript catches up. */
 type Echo = { id: number; text: string; failed: boolean; confirmed: boolean };
 
-export function Chat({ sessionId, onBack, onTerminal }: {
-  sessionId: string; onBack: () => void; onTerminal: (surfaceId: string, title: string) => void;
+export function Chat({ sessionId, onBack, onTerminal, onWork }: {
+  sessionId: string;
+  onBack: () => void;
+  onTerminal: (surfaceId: string, title: string) => void;
+  onWork: (worktreeId: string) => void;
 }) {
   const { turns, connected } = useTurns(sessionId);
   const [meta, setMeta] = useState<{
@@ -430,6 +433,18 @@ export function Chat({ sessionId, onBack, onTerminal }: {
             ? <Wifi className="size-4 text-success" aria-label="Live" />
             : <WifiOff className="size-4 animate-pulse text-warning" aria-label="Reconnecting" />}
         </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={!(meta?.session as any)?.worktreeId}
+          onClick={() => {
+            const id = (meta?.session as any)?.worktreeId;
+            if (id) onWork(id);
+          }}
+          aria-label="Review changes"
+        >
+          <FileDiff className="size-5" aria-hidden />
+        </Button>
         <Button
           variant="ghost"
           size="icon"

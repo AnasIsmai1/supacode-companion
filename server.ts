@@ -18,6 +18,9 @@ import { agentsFor } from "./lib/agents.ts";
 import { runningOutput } from "./lib/running.ts";
 import { files } from "./lib/files.ts";
 import { listDir, safePath, HOME } from "./lib/fs.ts";
+import { diffStat, diffSummary, filePatch, resolveWorktree } from "./lib/diff.ts";
+import { runState, scripts, startRun, stopRun } from "./lib/run.ts";
+import { commit, createPR, discardAll, push, restoreFile, status } from "./lib/git.ts";
 import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 
@@ -326,6 +329,76 @@ const server = Bun.serve<WSData>({
       return (await sendText(s.zmx, String(text)))
         ? json({ ok: true })
         : json({ error: "could not submit the reply" }, 502);
+    }
+
+    // --- what a session changed, against the fork point of its branch ---
+    // --- Three depths: counts for the list, files for the view, one patch on
+    // --- expand. A phone should never parse 40 files of hunks to paint a list.
+    if (p.startsWith("/api/diff")) {
+      const wt = await resolveWorktree(url.searchParams.get("wt"));
+      if (!wt) return json({ error: "unknown worktree" }, 404);
+
+      if (p === "/api/diff/stat") return json(await diffStat(wt));
+      if (p === "/api/diff") return json(await diffSummary(wt));
+      if (p === "/api/diff/file") {
+        const hit = await filePatch(wt, url.searchParams.get("path") ?? "");
+        return hit ? json(hit) : json({ error: "no diff for that file" }, 404);
+      }
+      return json({ error: "not found" }, 404);
+    }
+
+    // --- run a command in a worktree, and read back what it printed ---
+    // --- zmx owns the process, so a build survives this server restarting. ---
+    if (p.startsWith("/api/run")) {
+      const wt = await resolveWorktree(url.searchParams.get("wt"));
+      if (!wt) return json({ error: "unknown worktree" }, 404);
+      const body = req.method === "POST" ? ((await req.json().catch(() => ({}))) as Record<string, string>) : {};
+
+      if (p === "/api/run/scripts") return json({ scripts: await scripts(wt) });
+      if (p === "/api/run/stop" && req.method === "POST") {
+        return (await stopRun(wt)) ? json({ ok: true }) : json({ error: "could not interrupt" }, 502);
+      }
+      if (p === "/api/run" && req.method === "POST") {
+        const r = await startRun(wt, String(body.command ?? ""));
+        return r.ok ? json({ ok: true, session: r.session }) : json({ error: r.error }, 400);
+      }
+      if (p === "/api/run") {
+        const st = await runState(wt);
+        // Same trick as /api/screen: the screen is mostly identical between polls
+        // and the client parses it into thousands of spans.
+        if (url.searchParams.get("since") === st.hash) {
+          return json({ ...st, screen: "", unchanged: true });
+        }
+        return json(st);
+      }
+      return json({ error: "not found" }, 404);
+    }
+
+    // --- git writes. Read-only diff lives above; this is the half that can
+    // --- change your repo, so it is deliberately five operations wide.
+    if (p.startsWith("/api/git/")) {
+      const wt = await resolveWorktree(url.searchParams.get("wt"));
+      if (!wt) return json({ error: "unknown worktree" }, 404);
+
+      if (p === "/api/git/status") return json(await status(wt));
+      if (req.method !== "POST") return json({ error: "not found" }, 404);
+
+      const b = (await req.json().catch(() => ({}))) as Record<string, string>;
+      const done = (r: { ok: boolean; out: string; error?: string }) =>
+        r.ok ? json({ ok: true, out: r.out }) : json({ error: r.error ?? "failed" }, 502);
+
+      switch (p) {
+        case "/api/git/commit": return done(await commit(wt, String(b.message ?? "")));
+        case "/api/git/push": return done(await push(wt));
+        case "/api/git/pr": return done(await createPR(wt, String(b.title ?? ""), String(b.body ?? "")));
+        case "/api/git/restore": return done(await restoreFile(wt, String(b.path ?? "")));
+        // Typed confirm on the client is not enough on its own — require it here too.
+        case "/api/git/discard":
+          return b.confirm === "discard"
+            ? done(await discardAll(wt))
+            : json({ error: "confirmation required" }, 400);
+      }
+      return json({ error: "not found" }, 404);
     }
 
     // --- disk browser, for adding a project ---

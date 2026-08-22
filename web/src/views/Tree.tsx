@@ -1,5 +1,5 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { ChevronRight, CircleDot, Circle, FolderPlus, Plus, Search, Terminal, TriangleAlert, X } from "lucide-react";
+import { ChevronRight, CircleDot, Circle, FileDiff, FolderPlus, Plus, Search, Terminal, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { usePoll, type Project, type Win, type Worktree } from "@/lib/api";
@@ -37,8 +37,8 @@ function WindowRow({ w, onOpen }: { w: Win; onOpen: (w: Win) => void }) {
 }
 
 function WorktreeNode({
-  wt, onOpen, onNewWindow,
-}: { wt: Worktree; onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void }) {
+  wt, onOpen, onNewWindow, onWork,
+}: { wt: Worktree; onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void; onWork: (wt: Worktree) => void }) {
   const live = wt.windows.filter((w) => w.sessionId).length;
   const [open, setOpen] = useState(wt.attention > 0 || live > 0);
 
@@ -56,6 +56,16 @@ function WorktreeNode({
           {!open && live > 0 && <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-muted">{live}</span>}
           {wt.attention > 0 && <span className="size-2 shrink-0 rounded-full bg-warning" aria-label="needs attention" />}
         </Collapsible.Trigger>
+        {/* Diff, runs and git belong to the worktree, not to any one session —
+            and have to work when every session in it is busy or dead. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Changes in ${wt.path.split("/").pop()}`}
+          onClick={() => onWork(wt)}
+        >
+          <FileDiff className={cn("size-4", wt.dirty && "text-warning")} aria-hidden />
+        </Button>
         <Button variant="ghost" size="icon" aria-label={`New window in ${wt.path.split("/").pop()}`} onClick={() => onNewWindow(wt)}>
           <Plus className="size-4" aria-hidden />
         </Button>
@@ -118,8 +128,8 @@ function Section({ title, rows, onOpen }: { title: string; rows: Flat[]; onOpen:
 }
 
 export function Tree({
-  onOpen, onNewWindow, onBrowse,
-}: { onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void; onBrowse: () => void }) {
+  onOpen, onNewWindow, onBrowse, onWork,
+}: { onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void; onBrowse: () => void; onWork: (wt: Worktree) => void }) {
   const { data, error } = usePoll<{ projects: Project[]; live: number }>("/api/tree", 3000);
   const [q, setQ] = useState("");
 
@@ -188,7 +198,7 @@ export function Tree({
           <h2 className="border-b border-line bg-surface/40 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wider text-faint">
             All projects <span className="tabular-nums">{data.projects.length}</span>
           </h2>
-          {data.projects.map((p) => <ProjectNode key={p.name} p={p} onOpen={onOpen} onNewWindow={onNewWindow} />)}
+          {data.projects.map((p) => <ProjectNode key={p.name} p={p} onOpen={onOpen} onNewWindow={onNewWindow} onWork={onWork} />)}
         </>
       )}
     </>
@@ -196,8 +206,8 @@ export function Tree({
 }
 
 function ProjectNode({
-  p, onOpen, onNewWindow,
-}: { p: Project; onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void }) {
+  p, onOpen, onNewWindow, onWork,
+}: { p: Project; onOpen: (w: Win) => void; onNewWindow: (wt: Worktree) => void; onWork: (wt: Worktree) => void }) {
   // Collapsed unless something in it is running or waiting on you.
   // Collapsed by default: live work is surfaced by the sections above, so the
   // tree is for browsing, not for hunting.
@@ -212,7 +222,7 @@ function ProjectNode({
         {p.attention > 0 && <span className="size-2 rounded-full bg-warning" aria-label="needs attention" />}
       </Collapsible.Trigger>
       <Collapsible.Content className="pb-1">
-        {p.worktrees.map((wt) => <WorktreeNode key={wt.id} wt={wt} onOpen={onOpen} onNewWindow={onNewWindow} />)}
+        {p.worktrees.map((wt) => <WorktreeNode key={wt.id} wt={wt} onOpen={onOpen} onNewWindow={onNewWindow} onWork={onWork} />)}
       </Collapsible.Content>
     </Collapsible.Root>
   );

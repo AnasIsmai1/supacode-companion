@@ -10,11 +10,15 @@ import { Tree } from "@/views/Tree";
 const Chat = lazy(() => import("@/views/Chat").then((m) => ({ default: m.Chat })));
 const Terminal = lazy(() => import("@/views/Terminal").then((m) => ({ default: m.Terminal })));
 const Browse = lazy(() => import("@/views/Browse").then((m) => ({ default: m.Browse })));
+// The diff renderer is the heaviest thing in the app; it must not be in the
+// tree's first paint either.
+const Work = lazy(() => import("@/views/Work").then((m) => ({ default: m.Work })));
 
 type Route =
   | { view: "tree" }
   | { view: "chat"; id: string }
   | { view: "term"; id: string; title: string }
+  | { view: "work"; wt: string }
   | { view: "browse" };
 
 function parse(): Route {
@@ -25,6 +29,12 @@ function parse(): Route {
     return { view: "term", id: m[1], title: new URLSearchParams(location.search).get("t") ?? "terminal" };
   }
   if (p === "/browse") return { view: "browse" };
+  // Worktree ids are already percent-encoded paths, so they travel as a query
+  // param: as a path segment they decode back into slashes and stop matching.
+  if (p === "/w") {
+    const wt = new URLSearchParams(location.search).get("wt");
+    if (wt) return { view: "work", wt };
+  }
   return { view: "tree" };
 }
 
@@ -49,11 +59,13 @@ export default function App() {
             sessionId={route.id}
             onBack={() => go("/")}
             onTerminal={(surfaceId, title) => go(`/t/${surfaceId}?t=${encodeURIComponent(title)}`)}
+            onWork={(wt) => go(`/w?wt=${encodeURIComponent(wt)}`)}
           />
         )}
         {route.view === "term" && (
           <Terminal sessionId={route.id} title={route.title} onChat={null} onBack={() => go("/")} />
         )}
+        {route.view === "work" && <Work wt={route.wt} onBack={() => go("/")} />}
         {route.view === "browse" && <Browse onDone={() => go("/")} />}
       </Suspense>
 
@@ -65,6 +77,7 @@ export default function App() {
               : go(`/t/${w.surfaceId}?t=${encodeURIComponent(w.title)}`)
           }
           onBrowse={() => go("/browse")}
+          onWork={(wt) => go(`/w?wt=${encodeURIComponent(wt.id)}`)}
           onNewWindow={setNewWindowFor}
         />
       )}

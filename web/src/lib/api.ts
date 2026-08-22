@@ -17,6 +17,16 @@ export type Pending =
   | { kind: "permission"; title: string; options: { key: string; label: string }[] }
   | null;
 export type Tool = { name: string; summary: string };
+export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed" | "untracked";
+export type DiffFile = {
+  path: string; oldPath?: string; status: DiffFileStatus;
+  additions: number; deletions: number; binary: boolean; truncated?: boolean;
+};
+export type SessionDiff = {
+  ok: boolean; branch: string | null; base: string | null; files: DiffFile[];
+  totals: { files: number; additions: number; deletions: number };
+  truncated: boolean; baseWarning?: string; error?: string;
+};
 export type Agent = { id: string; task: string; tools: number; lastTool: string | null; updatedAt: number; active: boolean };
 export type Turn = { role: "user" | "assistant"; text: string; tools: Tool[]; error: string | null; questions: Question[] | null; toolUseId: string | null; ts: number; uuid: string };
 
