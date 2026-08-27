@@ -27,23 +27,17 @@
 Open work, roughly in the order I'd do it. `V2.md` holds the design and the
 decision log; this is just what is left.
 
-## Blocked on a decision
+## Blocked
 
-**Cold-launch test for `open -g -a supacode`.** `open -g` is documented as "Does
-not bring the application to the foreground", and it verifiably does not steal
-focus when Supacode is already running (frontmost stayed `zen` across the call).
-What is untested is a cold launch: `-g` stops LaunchServices activating the app,
-but an app can still call `NSApp.activate()` itself during startup. Testing means
-quitting Supacode, which closes tabs and windows. zmx sessions survive, since zmx
-owns them, but it is disruptive enough to ask first.
+**Cold-launch test for `open -g -a supacode`.** Verified it does not steal focus
+when Supacode is already running. The cold launch is untested, because it means
+quitting Supacode with a lot of live worktrees open. `-g` stops LaunchServices
+activating the app, but an app can still call `NSApp.activate()` itself.
 
-Outcome changes what happens to
-[supacode#821](https://github.com/supabitapp/supacode/issues/821): if `-g` works
-cold, that issue should be closed by its own author and the escape hatch wired
-with `-g` instead.
-
-**Merge `run-notify` into `main`.** Six commits, nothing landed on main since the
-morning of 2026-08-22.
+Asked the maintainer directly on
+[supacode#821](https://github.com/supabitapp/supacode/issues/821), since they can
+answer from the source faster than this can be tested. If `-g` works cold, that
+issue should be closed and the escape hatch wired with `-g`.
 
 ## Not started
 
@@ -81,12 +75,22 @@ morning of 2026-08-22.
 
 ## Filed upstream
 
-- [supacode#820](https://github.com/supabitapp/supacode/issues/820) `tab list
-  --json` with titles, surface ids and agent pid. Would let `lib/layout.ts` stop
-  parsing `~/.supacode/layouts.json`.
-- [supacode#821](https://github.com/supabitapp/supacode/issues/821) launching the
-  app from the CLI without activating it. See the blocked item above.
-- [zmx#211](https://github.com/neurosnap/zmx/issues/211#issuecomment-5378285847)
-  commented: `send` returns exit 0 and delivers nothing across a version
-  boundary. Their own `get` already fails fast with "daemon too old?", which is
-  the behaviour `send` should copy.
+Checked 2026-08-27. All three got a maintainer response within a day.
+
+- **[supacode#820](https://github.com/supabitapp/supacode/issues/820)** `tab list
+  --json`. Labelled `ready`, self-assigned by sbertix, who plans to mirror
+  `worktree status` and add `--json` across the commands. Flagged in a followup
+  that the agent pid is NEW data rather than a reformat: `tab list` does not
+  carry it at all today, and it is the only field that cannot be worked around.
+  Offered to test a branch. Nothing to do but wait.
+- **[supacode#821](https://github.com/supabitapp/supacode/issues/821)** launching
+  without activating. Labelled `question`. sbertix asked whether
+  `open -g -a supacode` already does it. Probably yes. Answered honestly that
+  only the warm case is verified and asked whether the app self-activates on
+  launch. Likely outcome is that this closes as already-solved.
+- **[zmx#211](https://github.com/neurosnap/zmx/issues/211)** silent cross-version
+  `send`. neurosnap replied "I didn't think about embedded versions. I might
+  merge the associated pr" — PR #212 had been closed unmerged, and the
+  Supacode-bundles-0.6.0 angle moved it back toward landing. Still no release
+  past v0.7.0, so the bug is live and `lib/zmx.ts` must keep preferring the
+  bundled binary. Offered to test a build.
